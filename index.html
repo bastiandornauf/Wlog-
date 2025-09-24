@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0ea5e9">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Zeit | PWA</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Zeit</h1>
+      <button id="installBtn" class="btn ghost" hidden>Installieren</button>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <div class="now-row">
+          <div>
+            <div class="now-time" id="nowTime">--:--</div>
+            <div class="now-date" id="nowDate">--.--.----</div>
+          </div>
+          <button id="toggleBtn" class="primary large">Start</button>
+        </div>
+        <div class="status-row" id="statusRow" aria-live="polite"></div>
+      </section>
+
+      <section class="card">
+        <div class="flex between center">
+          <h2 class="section-title">Heute</h2>
+          <button id="addManualBtn" class="btn">+ Eintrag</button>
+        </div>
+        <ul id="todayList" class="list"></ul>
+        <div class="sum-row">
+          <span>Summe heute</span>
+          <strong id="todaySum">00:00</strong>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="flex between center wrap gap">
+          <h2 class="section-title">Export</h2>
+          <label class="month-picker">
+            <span>Monat</span>
+            <input id="monthInput" type="month">
+          </label>
+          <button id="exportBtn" class="btn">CSV Export</button>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="editDialog">
+      <form method="dialog" id="editForm" class="dialog-body">
+        <h3 id="dialogTitle">Eintrag bearbeiten</h3>
+        <label>
+          <span>Von</span>
+          <input type="datetime-local" id="fromInput" required>
+        </label>
+        <label>
+          <span>Bis</span>
+          <input type="datetime-local" id="toInput">
+        </label>
+        <div class="dialog-actions">
+          <button value="cancel" class="btn ghost">Abbrechen</button>
+          <button id="deleteEntryBtn" class="btn danger" type="button">Löschen</button>
+          <button id="saveEntryBtn" class="primary" value="default">Speichern</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" defer></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/service-worker.js');
+        });
+      }
+    </script>
+  </body>
+  </html>
+
