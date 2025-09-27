@@ -208,20 +208,9 @@
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
 
-    // Debug output
-    console.log('Month filter:', { year, month, start, end });
-    console.log('All entries:', entries);
-
     const monthEntries = entries
-      .filter(e => {
-        const entryDate = new Date(e.start);
-        const isInMonth = entryDate >= start && entryDate < end;
-        console.log('Entry:', e.start, 'Date:', entryDate, 'In month:', isInMonth);
-        return isInMonth;
-      })
+      .filter(e => new Date(e.start) >= start && new Date(e.start) < end)
       .sort((a,b) => new Date(a.start) - new Date(b.start));
-
-    console.log('Filtered entries:', monthEntries);
 
     monthList.innerHTML = '';
     let totalMs = 0;
@@ -238,7 +227,6 @@
       const surcharge = calculateSurcharge(startTime, endTime);
       surchargeMs += surcharge;
       
-      console.log('Entry surcharge:', { startTime, endTime, surcharge, duration: fmtDuration(surcharge) });
       
       // Add surcharge class if applicable
       if (surcharge > 0) {
@@ -265,7 +253,6 @@
       monthList.appendChild(li);
     }
     
-    console.log('Total MS:', totalMs, 'Surcharge MS:', surchargeMs);
     monthSum.textContent = fmtDuration(totalMs);
     surchargeSum.textContent = fmtDuration(surchargeMs);
   }
@@ -307,7 +294,8 @@
         const nightWorkEnd = new Date(Math.min(dayEnd.getTime(), nightEnd.getTime()));
         
         if (nightWorkStart < nightWorkEnd) {
-          surchargeMs += nightWorkEnd - nightWorkStart;
+          const nightSurcharge = nightWorkEnd - nightWorkStart;
+          surchargeMs += nightSurcharge;
         }
       }
       
