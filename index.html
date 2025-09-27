@@ -43,12 +43,21 @@
 
       <section class="card">
         <div class="flex between center wrap gap">
-          <h2 class="section-title">Export</h2>
+          <h2 class="section-title">Monatsansicht</h2>
           <label class="month-picker">
             <span>Monat</span>
             <input id="monthInput" type="month">
           </label>
           <button id="exportBtn" class="btn">CSV Export</button>
+        </div>
+        <ul id="monthList" class="list"></ul>
+        <div class="sum-row">
+          <span>Summe Monat</span>
+          <strong id="monthSum">00:00</strong>
+        </div>
+        <div class="sum-row">
+          <span>Zuschläge (Nacht/Sonntag)</span>
+          <strong id="surchargeSum">00:00</strong>
         </div>
       </section>
     </main>

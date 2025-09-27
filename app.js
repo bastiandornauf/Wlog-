@@ -22,6 +22,12 @@
   const nowDate = document.getElementById('nowDate');
   /** @type {HTMLButtonElement} */
   const installBtn = document.getElementById('installBtn');
+  /** @type {HTMLUListElement} */
+  const monthList = document.getElementById('monthList');
+  /** @type {HTMLSpanElement} */
+  const monthSum = document.getElementById('monthSum');
+  /** @type {HTMLSpanElement} */
+  const surchargeSum = document.getElementById('surchargeSum');
 
   /** @type {HTMLDialogElement} */
   const editDialog = document.getElementById('editDialog');
@@ -85,6 +91,10 @@
     openEditor({ id: crypto.randomUUID(), start: new Date().toISOString(), end: new Date().toISOString() }, true);
   });
 
+  monthInput.addEventListener('change', () => {
+    refreshUI();
+  });
+
   exportBtn.addEventListener('click', () => {
     const { year, month } = getSelectedMonth();
     const csv = buildMonthlyCsv(entries, year, month);
@@ -135,6 +145,7 @@
   function refreshUI() {
     renderStatus();
     renderToday();
+    renderMonth();
     ensureMonthDefault();
   }
 
@@ -190,6 +201,104 @@
     todaySum.textContent = fmtDuration(totalMs);
   }
 
+  function renderMonth() {
+    const { year, month } = getSelectedMonth();
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 1);
+
+    const monthEntries = entries
+      .filter(e => new Date(e.start) >= start && new Date(e.start) < end)
+      .sort((a,b) => new Date(a.start) - new Date(b.start));
+
+    monthList.innerHTML = '';
+    let totalMs = 0;
+    let surchargeMs = 0;
+
+    for (const e of monthEntries) {
+      const li = document.createElement('li');
+      const startTime = new Date(e.start);
+      const endTime = e.end ? new Date(e.end) : null;
+      const durationMs = endTime ? (endTime - startTime) : 0;
+      totalMs += durationMs;
+
+      // Calculate surcharge time
+      const surcharge = calculateSurcharge(startTime, endTime);
+      surchargeMs += surcharge;
+      
+      // Add surcharge class if applicable
+      if (surcharge > 0) {
+        li.classList.add('surcharge');
+      }
+
+      const title = document.createElement('div');
+      title.className = 'row-strong';
+      title.textContent = `${fmtTime(startTime)}${endTime ? ' – ' + fmtTime(endTime) : ' – …'}`;
+
+      const meta = document.createElement('div');
+      meta.className = 'row-meta';
+      const dayName = startTime.toLocaleDateString('de-DE', { weekday: 'long' });
+      meta.textContent = `${startTime.toLocaleDateString()} (${dayName}) • ${fmtDuration(durationMs)}`;
+
+      const edit = document.createElement('button');
+      edit.className = 'btn';
+      edit.textContent = 'Bearbeiten';
+      edit.addEventListener('click', () => openEditor(e, false));
+
+      li.appendChild(title);
+      li.appendChild(meta);
+      li.appendChild(edit);
+      monthList.appendChild(li);
+    }
+    
+    monthSum.textContent = fmtDuration(totalMs);
+    surchargeSum.textContent = fmtDuration(surchargeMs);
+  }
+
+  function calculateSurcharge(startTime, endTime) {
+    if (!endTime) return 0;
+    
+    let surchargeMs = 0;
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    
+    // Check if work spans multiple days
+    const current = new Date(start);
+    while (current < end) {
+      const nextDay = new Date(current);
+      nextDay.setDate(current.getDate() + 1);
+      nextDay.setHours(0, 0, 0, 0);
+      
+      const dayStart = new Date(Math.max(current.getTime(), start.getTime()));
+      const dayEnd = new Date(Math.min(nextDay.getTime(), end.getTime()));
+      
+      // Check if it's Sunday (0 = Sunday)
+      const isSunday = current.getDay() === 0;
+      
+      if (isSunday) {
+        // Full day surcharge for Sunday
+        surchargeMs += dayEnd - dayStart;
+      } else {
+        // Check for night work (22:00 - 05:00)
+        const nightStart = new Date(current);
+        nightStart.setHours(22, 0, 0, 0);
+        const nightEnd = new Date(nextDay);
+        nightEnd.setHours(5, 0, 0, 0);
+        
+        const nightWorkStart = new Date(Math.max(dayStart.getTime(), nightStart.getTime()));
+        const nightWorkEnd = new Date(Math.min(dayEnd.getTime(), nightEnd.getTime()));
+        
+        if (nightWorkStart < nightWorkEnd) {
+          surchargeMs += nightWorkEnd - nightWorkStart;
+        }
+      }
+      
+      current.setDate(current.getDate() + 1);
+      current.setHours(0, 0, 0, 0);
+    }
+    
+    return surchargeMs;
+  }
+
   function openEditor(entry, isNew) {
     editingId = isNew ? null : entry.id;
     fromInput.value = toLocalInputValue(new Date(entry.start));
@@ -223,8 +332,9 @@
   function buildMonthlyCsv(allEntries, year, month) {
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
-    const rows = [['Datum','Start','Ende','Dauer (hh:mm)']];
+    const rows = [['Datum','Start','Ende','Dauer (hh:mm)','Zuschläge (hh:mm)','Wochentag']];
     let totalMs = 0;
+    let totalSurchargeMs = 0;
     const monthEntries = allEntries
       .filter(e => new Date(e.start) >= start && new Date(e.start) < end)
       .sort((a,b) => new Date(a.start) - new Date(b.start));
@@ -232,16 +342,21 @@
       const s = new Date(e.start);
       const t = e.end ? new Date(e.end) : null;
       const durMs = t ? (t - s) : 0;
+      const surchargeMs = calculateSurcharge(s, t);
+      const dayName = s.toLocaleDateString('de-DE', { weekday: 'long' });
       totalMs += durMs;
+      totalSurchargeMs += surchargeMs;
       rows.push([
         s.toLocaleDateString(),
         fmtTime(s),
         t ? fmtTime(t) : '',
-        fmtDuration(durMs)
+        fmtDuration(durMs),
+        fmtDuration(surchargeMs),
+        dayName
       ]);
     }
     rows.push([]);
-    rows.push(['Summe','','',fmtDuration(totalMs)]);
+    rows.push(['Summe','','',fmtDuration(totalMs),fmtDuration(totalSurchargeMs),'']);
     return rows.map(r => r.map(escapeCsv).join(';')).join('\n');
   }
 

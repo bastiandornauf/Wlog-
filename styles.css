@@ -121,6 +121,23 @@ body {
   margin-top: 8px;
 }
 
+/* Highlighting for surcharge entries */
+.list li.surcharge {
+  background: rgba(255, 193, 7, 0.1);
+  border-left: 3px solid #ffc107;
+  padding-left: 8px;
+}
+
+.list li.surcharge .row-strong {
+  color: #ffc107;
+}
+
+.list li.surcharge .row-meta::after {
+  content: " (Zuschlag)";
+  color: #ffc107;
+  font-weight: 600;
+}
+
 .month-picker { display: grid; gap: 6px; }
 .month-picker span { color: var(--muted); font-size: 12px; }
 
