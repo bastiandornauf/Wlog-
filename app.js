@@ -61,6 +61,7 @@
     e.preventDefault();
     deferredPrompt = e;
     installBtn.hidden = false;
+    // Silently handle the install prompt
   });
   installBtn.addEventListener('click', async () => {
     if (!deferredPrompt) return;
