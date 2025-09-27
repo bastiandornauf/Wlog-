@@ -98,7 +98,9 @@
   exportBtn.addEventListener('click', () => {
     const { year, month } = getSelectedMonth();
     const csv = buildMonthlyCsv(entries, year, month);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    // Add UTF-8 BOM for proper encoding
+    const csvWithBom = '\uFEFF' + csv;
+    const blob = new Blob([csvWithBom], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -145,8 +147,8 @@
   function refreshUI() {
     renderStatus();
     renderToday();
-    renderMonth();
     ensureMonthDefault();
+    renderMonth();
   }
 
   function renderStatus() {
@@ -206,9 +208,20 @@
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
 
+    // Debug output
+    console.log('Month filter:', { year, month, start, end });
+    console.log('All entries:', entries);
+
     const monthEntries = entries
-      .filter(e => new Date(e.start) >= start && new Date(e.start) < end)
+      .filter(e => {
+        const entryDate = new Date(e.start);
+        const isInMonth = entryDate >= start && entryDate < end;
+        console.log('Entry:', e.start, 'Date:', entryDate, 'In month:', isInMonth);
+        return isInMonth;
+      })
       .sort((a,b) => new Date(a.start) - new Date(b.start));
+
+    console.log('Filtered entries:', monthEntries);
 
     monthList.innerHTML = '';
     let totalMs = 0;
@@ -224,6 +237,8 @@
       // Calculate surcharge time
       const surcharge = calculateSurcharge(startTime, endTime);
       surchargeMs += surcharge;
+      
+      console.log('Entry surcharge:', { startTime, endTime, surcharge, duration: fmtDuration(surcharge) });
       
       // Add surcharge class if applicable
       if (surcharge > 0) {
@@ -250,6 +265,7 @@
       monthList.appendChild(li);
     }
     
+    console.log('Total MS:', totalMs, 'Surcharge MS:', surchargeMs);
     monthSum.textContent = fmtDuration(totalMs);
     surchargeSum.textContent = fmtDuration(surchargeMs);
   }
@@ -263,11 +279,13 @@
     
     // Check if work spans multiple days
     const current = new Date(start);
+    current.setHours(0, 0, 0, 0); // Start at beginning of day
+    
     while (current < end) {
       const nextDay = new Date(current);
       nextDay.setDate(current.getDate() + 1);
-      nextDay.setHours(0, 0, 0, 0);
       
+      // Get the actual work period for this day
       const dayStart = new Date(Math.max(current.getTime(), start.getTime()));
       const dayEnd = new Date(Math.min(nextDay.getTime(), end.getTime()));
       
@@ -278,12 +296,13 @@
         // Full day surcharge for Sunday
         surchargeMs += dayEnd - dayStart;
       } else {
-        // Check for night work (22:00 - 05:00)
+        // Check for night work (22:00 - 05:00 next day)
         const nightStart = new Date(current);
         nightStart.setHours(22, 0, 0, 0);
         const nightEnd = new Date(nextDay);
         nightEnd.setHours(5, 0, 0, 0);
         
+        // Calculate overlap between work time and night time
         const nightWorkStart = new Date(Math.max(dayStart.getTime(), nightStart.getTime()));
         const nightWorkEnd = new Date(Math.min(dayEnd.getTime(), nightEnd.getTime()));
         
@@ -293,7 +312,6 @@
       }
       
       current.setDate(current.getDate() + 1);
-      current.setHours(0, 0, 0, 0);
     }
     
     return surchargeMs;
