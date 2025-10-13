@@ -16,6 +16,16 @@
   const monthInput = document.getElementById('monthInput');
   /** @type {HTMLButtonElement} */
   const exportBtn = document.getElementById('exportBtn');
+  /** @type {HTMLButtonElement} */
+  const importBtn = document.getElementById('importBtn');
+  /** @type {HTMLInputElement} */
+  const importFile = document.getElementById('importFile');
+  /** @type {HTMLButtonElement} */
+  const backupJsonBtn = document.getElementById('backupJsonBtn');
+  /** @type {HTMLButtonElement} */
+  const restoreJsonBtn = document.getElementById('restoreJsonBtn');
+  /** @type {HTMLInputElement} */
+  const restoreJsonFile = document.getElementById('restoreJsonFile');
   /** @type {HTMLDivElement} */
   const nowTime = document.getElementById('nowTime');
   /** @type {HTMLDivElement} */
@@ -28,6 +38,10 @@
   const monthSum = document.getElementById('monthSum');
   /** @type {HTMLSpanElement} */
   const surchargeSum = document.getElementById('surchargeSum');
+  /** @type {HTMLSpanElement} */
+  const expectedSum = document.getElementById('expectedSum');
+  /** @type {HTMLSpanElement} */
+  const deltaSum = document.getElementById('deltaSum');
 
   /** @type {HTMLDialogElement} */
   const editDialog = document.getElementById('editDialog');
@@ -110,6 +124,86 @@
     a.click();
     URL.revokeObjectURL(url);
     a.remove();
+  });
+
+  importBtn.addEventListener('click', () => {
+    importFile.value = '';
+    importFile.click();
+  });
+
+  importFile.addEventListener('change', async () => {
+    const file = importFile.files && importFile.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const imported = parseCsvToEntries(text);
+      if (!imported.length) {
+        announce('Keine gültigen Einträge gefunden');
+        return;
+      }
+      const replace = confirm('Bestehende Einträge ersetzen?\nOK = Ersetzen, Abbrechen = Anhängen');
+      if (replace) {
+        entries = imported;
+      } else {
+        entries = entries.concat(imported);
+      }
+      saveEntries(entries);
+      refreshUI();
+      announce('Import abgeschlossen');
+    } catch (e) {
+      console.error(e);
+      announce('Import fehlgeschlagen');
+    }
+  });
+
+  backupJsonBtn.addEventListener('click', () => {
+    try {
+      const payload = { version: 1, exportedAt: new Date().toISOString(), entries };
+      const json = JSON.stringify(payload, null, 2);
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `wlog-backup-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      a.remove();
+    } catch (e) {
+      console.error(e);
+      announce('Backup fehlgeschlagen');
+    }
+  });
+
+  restoreJsonBtn.addEventListener('click', () => {
+    restoreJsonFile.value = '';
+    restoreJsonFile.click();
+  });
+
+  restoreJsonFile.addEventListener('change', async () => {
+    const file = restoreJsonFile.files && restoreJsonFile.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const imported = normalizeBackupData(data);
+      if (!imported.length) {
+        announce('Keine gültigen Einträge in JSON');
+        return;
+      }
+      const replace = confirm('Bestehende Einträge ersetzen?\nOK = Ersetzen, Abbrechen = Anhängen');
+      if (replace) {
+        entries = imported;
+      } else {
+        entries = entries.concat(imported);
+      }
+      saveEntries(entries);
+      refreshUI();
+      announce('Wiederherstellung abgeschlossen');
+    } catch (e) {
+      console.error(e);
+      announce('Wiederherstellung fehlgeschlagen');
+    }
   });
 
   deleteEntryBtn.addEventListener('click', () => {
@@ -256,6 +350,44 @@
     
     monthSum.textContent = fmtDuration(totalMs);
     surchargeSum.textContent = fmtDuration(surchargeMs);
+
+    // Expected working time: 8.5h per weekday (Mon-Fri)
+    const expectedMs = calculateExpectedMonthMs(year, month);
+    expectedSum.textContent = fmtDuration(expectedMs);
+
+    // Delta = worked - expected (signed)
+    const deltaMs = totalMs - expectedMs;
+    deltaSum.textContent = fmtSignedDuration(deltaMs);
+  }
+
+  function calculateExpectedMonthMs(year, month) {
+    const msPerHour = 60 * 60 * 1000;
+    const hoursPerDay = 8.5;
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 1);
+
+    // Cap to today if selected month is current month
+    const today = new Date();
+    const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
+    const capEnd = isCurrentMonth ? new Date(Math.min(end.getTime(), new Date(today.getFullYear(), today.getMonth(), today.getDate()+1).getTime())) : end;
+
+    let expectedDays = 0;
+    for (let d = new Date(start); d < capEnd; d.setDate(d.getDate() + 1)) {
+      const weekday = d.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
+      if (weekday >= 1 && weekday <= 5) {
+        expectedDays += 1;
+      }
+    }
+    return expectedDays * hoursPerDay * msPerHour;
+  }
+
+  function fmtSignedDuration(ms) {
+    const sign = ms >= 0 ? '+' : '-';
+    const abs = Math.abs(ms);
+    const totalMinutes = Math.round(abs / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${sign}${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}`;
   }
 
   function calculateSurcharge(startTime, endTime) {
@@ -375,6 +507,118 @@
     return s;
   }
 
+  // --- CSV Import utilities ---
+
+  function parseCsvToEntries(csvText) {
+    const lines = csvText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim().length > 0);
+    if (lines.length === 0) return [];
+    const header = splitCsvLine(lines[0]);
+    const idxDate = header.findIndex(h => /datum/i.test(h));
+    const idxStart = header.findIndex(h => /^start$/i.test(h));
+    const idxEnd = header.findIndex(h => /^ende$/i.test(h));
+    if (idxDate < 0 || idxStart < 0) return [];
+
+    const out = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = splitCsvLine(lines[i]);
+      if (!cols.length) continue;
+      const dateStr = (cols[idxDate] || '').trim();
+      const startStr = (cols[idxStart] || '').trim();
+      const endStr = (cols[idxEnd] || '').trim();
+      if (!dateStr || !startStr) continue;
+
+      const start = parseLocalDateTime(dateStr, startStr);
+      const end = endStr ? parseLocalDateTime(dateStr, endStr) : null;
+      if (!start) continue;
+
+      out.push({
+        id: crypto.randomUUID(),
+        start: start.toISOString(),
+        end: end ? end.toISOString() : undefined
+      });
+    }
+    return out;
+  }
+
+  function splitCsvLine(line) {
+    const res = [];
+    let cur = '';
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') { inQ = false; }
+        else { cur += ch; }
+      } else {
+        if (ch === ';') { res.push(cur); cur = ''; }
+        else if (ch === '"') { inQ = true; }
+        else { cur += ch; }
+      }
+    }
+    res.push(cur);
+    return res;
+  }
+
+  function parseLocalDateTime(dateStr, timeStr) {
+    const t = parseTimeHHMM(timeStr);
+    if (!t) return null;
+
+    let y,m,d;
+    const m1 = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(dateStr);
+    if (m1) {
+      d = parseInt(m1[1],10);
+      m = parseInt(m1[2],10) - 1;
+      y = parseInt(m1[3],10);
+    } else {
+      const m2 = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+      if (!m2) return null;
+      y = parseInt(m2[1],10);
+      m = parseInt(m2[2],10) - 1;
+      d = parseInt(m2[3],10);
+    }
+    return new Date(y, m, d, t.h, t.min, 0, 0);
+  }
+
+  function parseTimeHHMM(s) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+    if (!m) return null;
+    const h = parseInt(m[1],10);
+    const min = parseInt(m[2],10);
+    if (isNaN(h) || isNaN(min)) return null;
+    return { h, min };
+  }
+
+  function normalizeBackupData(data) {
+    try {
+      const list = Array.isArray(data) ? data : Array.isArray(data.entries) ? data.entries : [];
+      const result = [];
+      for (const item of list) {
+        if (!item || typeof item !== 'object') continue;
+        const start = safeDate(item.start);
+        if (!start) continue;
+        const end = item.end ? safeDate(item.end) : null;
+        result.push({
+          id: typeof item.id === 'string' && item.id ? item.id : crypto.randomUUID(),
+          start: start.toISOString(),
+          end: end ? end.toISOString() : undefined
+        });
+      }
+      return result;
+    } catch {
+      return [];
+    }
+  }
+
+  function safeDate(value) {
+    try {
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? null : d;
+    } catch {
+      return null;
+    }
+  }
+
   function fmtTime(d) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
@@ -413,5 +657,19 @@
     statusRow.textContent = text;
     setTimeout(() => { if (statusRow.textContent === text) statusRow.textContent = ''; }, 1500);
   }
+  
+  // Enable iOS-only pull-to-refresh when installed to Home Screen (standalone)
+  try {
+    const isInWebAppiOS = (window.navigator.standalone === true);
+    if (isInWebAppiOS && window.PullToRefresh && typeof window.PullToRefresh.init === 'function') {
+      window.PullToRefresh.init({
+        mainElement: 'body',
+        onRefresh() {
+          window.location.reload();
+        }
+      });
+    }
+  } catch {}
+
 })();
 

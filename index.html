@@ -13,6 +13,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>WLOG | PWA</title>
     <link rel="stylesheet" href="./styles.css">
+    <script src="https://unpkg.com/pulltorefreshjs@0.1.22/dist/index.umd.js"></script>
   </head>
   <body>
     <header class="app-header">
@@ -51,7 +52,12 @@
             <span>Monat</span>
             <input id="monthInput" type="month">
           </label>
-          <button id="exportBtn" class="btn">CSV Export</button>
+        <button id="exportBtn" class="btn">CSV Export</button>
+        <button id="importBtn" class="btn">CSV Import</button>
+        <button id="backupJsonBtn" class="btn">Backup JSON</button>
+        <button id="restoreJsonBtn" class="btn">Restore JSON</button>
+        <input id="importFile" type="file" accept=".csv,text/csv" hidden>
+        <input id="restoreJsonFile" type="file" accept="application/json,.json" hidden>
         </div>
         <ul id="monthList" class="list"></ul>
         <div class="sum-row">
@@ -61,6 +67,14 @@
         <div class="sum-row">
           <span>Zuschläge (Nacht/Sonntag)</span>
           <strong id="surchargeSum">00:00</strong>
+        </div>
+        <div class="sum-row">
+          <span>Erwartet (8,5h/Werktag)</span>
+          <strong id="expectedSum">00:00</strong>
+        </div>
+        <div class="sum-row">
+          <span>Δ Differenz</span>
+          <strong id="deltaSum">+00:00</strong>
         </div>
       </section>
     </main>
