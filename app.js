@@ -312,6 +312,7 @@
     monthList.innerHTML = '';
     let totalMs = 0;
     let surchargeMs = 0;
+    const holidaySet = getHolidaySetSync(year, STATE_CODE);
 
     for (const e of monthEntries) {
       const li = document.createElement('li');
@@ -329,6 +330,11 @@
       if (surcharge > 0) {
         li.classList.add('surcharge');
       }
+      const holidayKey = new Date(startTime.getFullYear(), startTime.getMonth(), startTime.getDate()).getTime();
+      const isHoliday = holidaySet.has(holidayKey);
+      if (isHoliday) {
+        li.classList.add('holiday');
+      }
 
       const title = document.createElement('div');
       title.className = 'row-strong';
@@ -337,7 +343,8 @@
       const meta = document.createElement('div');
       meta.className = 'row-meta';
       const dayName = startTime.toLocaleDateString('de-DE', { weekday: 'long' });
-      meta.textContent = `${startTime.toLocaleDateString()} (${dayName}) • ${fmtDuration(durationMs)}`;
+      const holidayEmoji = isHoliday ? '🎉 ' : '';
+      meta.textContent = `${startTime.toLocaleDateString()} (${holidayEmoji}${dayName}) • ${fmtDuration(durationMs)}`;
 
       const edit = document.createElement('button');
       edit.className = 'btn';
