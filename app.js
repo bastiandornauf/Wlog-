@@ -2,6 +2,8 @@
   'use strict';
 
   const STORAGE_KEY = 'zeit.entries.v1';
+  const HOLIDAY_CACHE_PREFIX = 'zeit.holidays.'; // zeit.holidays.{state}.{year}
+  const STATE_CODE = 'nw'; // TODO: make configurable if needed
   /** @type {HTMLButtonElement} */
   const toggleBtn = document.getElementById('toggleBtn');
   /** @type {HTMLDivElement} */
@@ -351,20 +353,28 @@
     monthSum.textContent = fmtDuration(totalMs);
     surchargeSum.textContent = fmtDuration(surchargeMs);
 
-    // Expected working time: 8.5h per weekday (Mon-Fri)
-    const expectedMs = calculateExpectedMonthMs(year, month);
-    expectedSum.textContent = fmtDuration(expectedMs);
+    // Expected working time: start with nationwide holidays for quick display
+    const nationwideExpectedMs = calculateExpectedMonthMs(year, month, getGermanPublicHolidaySet(year));
+    expectedSum.textContent = fmtDuration(nationwideExpectedMs);
+    deltaSum.textContent = fmtSignedDuration(totalMs - nationwideExpectedMs);
 
-    // Delta = worked - expected (signed)
-    const deltaMs = totalMs - expectedMs;
-    deltaSum.textContent = fmtSignedDuration(deltaMs);
+    // Refine asynchronously using state-specific holidays
+    loadStateHolidaySet(year, STATE_CODE).then((stateHolidaySet) => {
+      if (!stateHolidaySet) return;
+      const refinedExpected = calculateExpectedMonthMs(year, month, stateHolidaySet);
+      expectedSum.textContent = fmtDuration(refinedExpected);
+      deltaSum.textContent = fmtSignedDuration(totalMs - refinedExpected);
+    }).catch(() => {
+      // ignore errors and keep nationwide result
+    });
   }
 
-  function calculateExpectedMonthMs(year, month) {
+  function calculateExpectedMonthMs(year, month, holidaySetOptional) {
     const msPerHour = 60 * 60 * 1000;
     const hoursPerDay = 8.5;
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
+    const holidays = holidaySetOptional || getGermanPublicHolidaySet(year);
 
     // Cap to today if selected month is current month
     const today = new Date();
@@ -375,10 +385,125 @@
     for (let d = new Date(start); d < capEnd; d.setDate(d.getDate() + 1)) {
       const weekday = d.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
       if (weekday >= 1 && weekday <= 5) {
-        expectedDays += 1;
+        const key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        if (!holidays.has(key)) {
+          expectedDays += 1;
+        }
       }
     }
     return expectedDays * hoursPerDay * msPerHour;
+  }
+
+  // Load state-specific holidays from API and return a Set keyed by midnight timestamps
+  async function loadStateHolidaySet(year, state) {
+    const cacheKey = `${HOLIDAY_CACHE_PREFIX}${state}.${year}`;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && Array.isArray(parsed.dates)) {
+          return datesArrayToSet(parsed.dates);
+        }
+      }
+    } catch {}
+
+    try {
+      const url = `https://get.api-feiertage.de?states=${encodeURIComponent(state)}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const dates = [];
+      if (data && Array.isArray(data.feiertage)) {
+        for (const f of data.feiertage) {
+          if (!f || typeof f.date !== 'string') continue;
+          // keep only requested year
+          const y = Number(f.date.slice(0,4));
+          if (y === year) dates.push(f.date);
+        }
+      }
+      try { localStorage.setItem(cacheKey, JSON.stringify({ dates })); } catch {}
+      return datesArrayToSet(dates);
+    } catch {
+      return null;
+    }
+  }
+
+  function datesArrayToSet(dateStrings) {
+    const set = new Set();
+    for (const s of dateStrings) {
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) {
+        const key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        set.add(key);
+      }
+    }
+    return set;
+  }
+
+  // Get holiday Set synchronously: prefer cached API data for state; fallback to nationwide calculation
+  function getHolidaySetSync(year, state) {
+    const cacheKey = `${HOLIDAY_CACHE_PREFIX}${state}.${year}`;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && Array.isArray(parsed.dates)) {
+          return datesArrayToSet(parsed.dates);
+        }
+      }
+    } catch {}
+    return getGermanPublicHolidaySet(year);
+  }
+
+  // Returns a Set of midnight timestamps for bundesweite Feiertage (Germany) for a given year.
+  function getGermanPublicHolidaySet(year) {
+    const dates = [];
+    // Fixed nationwide holidays
+    dates.push(new Date(year, 0, 1));   // Neujahr 01.01.
+    dates.push(new Date(year, 4, 1));   // Tag der Arbeit 01.05.
+    dates.push(new Date(year, 9, 3));   // Tag der Deutschen Einheit 03.10.
+    dates.push(new Date(year, 11, 25)); // 1. Weihnachtstag 25.12.
+    dates.push(new Date(year, 11, 26)); // 2. Weihnachtstag 26.12.
+
+    // Movable feasts (nationwide): Karfreitag, Ostermontag, Christi Himmelfahrt, Pfingstmontag
+    const easter = calculateEasterSunday(year);
+    dates.push(addDays(easter, -2)); // Karfreitag
+    dates.push(addDays(easter, 1));  // Ostermontag
+    dates.push(addDays(easter, 39)); // Christi Himmelfahrt
+    dates.push(addDays(easter, 50)); // Pfingstmontag
+
+    const set = new Set();
+    for (const d of dates) {
+      const key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      set.add(key);
+    }
+    return set;
+  }
+
+  // Anonymous Gregorian algorithm for Easter Sunday
+  function calculateEasterSunday(year) {
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31); // 3=March, 4=April
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(year, month - 1, day);
+  }
+
+  function addDays(date, days) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    d.setHours(0,0,0,0);
+    return d;
   }
 
   function fmtSignedDuration(ms) {
@@ -400,6 +525,14 @@
     // Check if work spans multiple days
     const current = new Date(start);
     current.setHours(0, 0, 0, 0); // Start at beginning of day
+    // Prepare holiday sets for involved years (sync: uses cache if available, else nationwide)
+    const holidaySetByYear = new Map();
+    const ensureHolidaySet = (year) => {
+      if (!holidaySetByYear.has(year)) {
+        holidaySetByYear.set(year, getHolidaySetSync(year, STATE_CODE));
+      }
+      return holidaySetByYear.get(year);
+    };
     
     while (current < end) {
       const nextDay = new Date(current);
@@ -409,11 +542,15 @@
       const dayStart = new Date(Math.max(current.getTime(), start.getTime()));
       const dayEnd = new Date(Math.min(nextDay.getTime(), end.getTime()));
       
-      // Check if it's Sunday (0 = Sunday)
+      // Check if it's Sunday (0 = Sunday) or state/nationwide holiday
       const isSunday = current.getDay() === 0;
+      const y = current.getFullYear();
+      const set = ensureHolidaySet(y);
+      const key = new Date(current.getFullYear(), current.getMonth(), current.getDate()).getTime();
+      const isHoliday = set.has(key);
       
-      if (isSunday) {
-        // Full day surcharge for Sunday
+      if (isSunday || isHoliday) {
+        // Full day surcharge for Sunday or public holiday
         surchargeMs += dayEnd - dayStart;
       } else {
         // Check for night work (22:00 - 05:00 next day)
@@ -565,7 +702,7 @@
     if (!t) return null;
 
     let y,m,d;
-    const m1 = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(dateStr);
+    const m1 = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(dateStr);
     if (m1) {
       d = parseInt(m1[1],10);
       m = parseInt(m1[2],10) - 1;
