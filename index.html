@@ -52,12 +52,6 @@
             <span>Monat</span>
             <input id="monthInput" type="month">
           </label>
-        <button id="exportBtn" class="btn">CSV Export</button>
-        <button id="importBtn" class="btn">CSV Import</button>
-        <button id="backupJsonBtn" class="btn">Backup JSON</button>
-        <button id="restoreJsonBtn" class="btn">Restore JSON</button>
-        <input id="importFile" type="file" accept=".csv,text/csv" hidden>
-        <input id="restoreJsonFile" type="file" accept="application/json,.json" hidden>
         </div>
         <ul id="monthList" class="list"></ul>
         <div class="sum-row">
@@ -77,6 +71,20 @@
           <strong id="deltaSum">+00:00</strong>
         </div>
       </section>
+      <section class="card">
+        <div class="flex between center wrap gap">
+          <h2 class="section-title">Daten</h2>
+          <div class="flex wrap gap">
+            <button id="exportBtn" class="btn">CSV Export</button>
+            <button id="importBtn" class="btn">CSV Import</button>
+            <button id="backupJsonBtn" class="btn">Backup JSON</button>
+            <button id="restoreJsonBtn" class="btn">Restore JSON</button>
+          </div>
+          <input id="importFile" type="file" accept=".csv,text/csv" hidden>
+          <input id="restoreJsonFile" type="file" accept="application/json,.json" hidden>
+        </div>
+      </section>
+    
     </main>
 
     <dialog id="editDialog">
