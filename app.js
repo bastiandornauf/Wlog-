@@ -81,7 +81,7 @@
   /** @type {HTMLInputElement} */
   const pauseInput = document.getElementById('pauseInput');
   /** @type {HTMLInputElement} */
-  const overdriveInput = document.getElementById('overdriveInput');
+  const exactStartInput = document.getElementById('exactStartInput');
   /** @type {HTMLElement} */
   const dateRow = document.getElementById('dateRow');
   /** @type {HTMLElement} */
@@ -91,7 +91,7 @@
   /** @type {HTMLElement} */
   const pauseRow = document.getElementById('pauseRow');
   /** @type {HTMLElement} */
-  const overdriveRow = document.getElementById('overdriveRow');
+  const exactStartRow = document.getElementById('exactStartRow');
   /** @type {HTMLButtonElement} */
   const deleteEntryBtn = document.getElementById('deleteEntryBtn');
   /** @type {HTMLButtonElement} */
@@ -100,7 +100,7 @@
   const editForm = document.getElementById('editForm');
   editForm.addEventListener('submit', (ev) => ev.preventDefault());
 
-  /** @type {{id:string, start:string, end?:string, type?:'work'|'u'|'f', pauseMin?:number, overdrive?:boolean}[]} */
+  /** @type {{id:string, start:string, end?:string, type?:'work'|'u'|'f', pauseMin?:number, exactStart?:boolean, overdrive?:boolean}[]} */
   let entries = loadEntries();
   /** @type {typeof DEFAULT_SETTINGS} */
   let settings = loadSettings();
@@ -335,8 +335,8 @@
 
     let start = null;
     let end = null;
-    let pauseMin = undefined;
-    let overdrive = false;
+      let pauseMin = undefined;
+      let exactStart = false;
 
     if (type === 'work') {
       if (!fromInput.value) return;
@@ -362,8 +362,8 @@
       } else {
         pauseInput.setCustomValidity('');
       }
-      overdrive = !!overdriveInput.checked;
-      start = applyDienstbeginnRounding(start, settings, overdrive);
+      exactStart = !!exactStartInput.checked;
+      start = applyDienstbeginnRounding(start, settings, exactStart);
     } else {
       if (!dateInput.value) return;
       start = parseLocalDate(dateInput.value);
@@ -379,7 +379,7 @@
           start: start.toISOString(),
           end: end ? end.toISOString() : undefined,
           pauseMin,
-          overdrive: type === 'work' ? overdrive : undefined
+          exactStart: type === 'work' ? exactStart : undefined
         };
       }
     } else {
@@ -389,7 +389,7 @@
         start: start.toISOString(),
         end: end ? end.toISOString() : undefined,
         pauseMin,
-        overdrive: type === 'work' ? overdrive : undefined
+        exactStart: type === 'work' ? exactStart : undefined
       });
     }
     saveEntries(entries);
@@ -443,7 +443,7 @@
         title.textContent = `U (Urlaub)`;
       } else if (type === 'f') {
         li.classList.add('daytype-f');
-        title.textContent = `F (Frei/Feiertag)`;
+        title.textContent = `F (Frei)`;
       } else {
         title.textContent = `${fmtTime(start)}${end ? ' – ' + fmtTime(end) : ' – …'}`;
       }
@@ -510,7 +510,7 @@
         title.textContent = `U (Urlaub)`;
       } else if (type === 'f') {
         li.classList.add('daytype-f');
-        title.textContent = `F (Frei/Feiertag)`;
+        title.textContent = `F (Frei)`;
       } else {
         title.textContent = `${fmtTime(startTime)}${endTime ? ' – ' + fmtTime(endTime) : ' – …'}`;
       }
@@ -779,7 +779,7 @@
     fromInput.value = toLocalInputValue(start);
     toInput.value = entry.end ? toLocalInputValue(new Date(entry.end)) : '';
     pauseInput.value = (typeof entry.pauseMin === 'number') ? String(entry.pauseMin) : '';
-    overdriveInput.checked = !!entry.overdrive;
+    exactStartInput.checked = !!(entry.exactStart || entry.overdrive);
     updateEditorMode();
     editDialog.showModal();
   }
@@ -810,7 +810,7 @@
   function buildMonthlyCsv(allEntries, year, month) {
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
-    const rows = [['Datum','Start','Ende','Dauer (hh:mm)','Zuschläge (hh:mm)','Wochentag','Typ','Pause (Min)','Overdrive','Ort','Soll (Std/Tag)']];
+    const rows = [['Datum','Start','Ende','Dauer (hh:mm)','Zuschläge (hh:mm)','Wochentag','Typ','Pause (Min)','Exakte Startzeit','Ort','Soll (Std/Tag)']];
     let totalMs = 0;
     let totalSurchargeMs = 0;
     const monthEntries = allEntries
@@ -834,7 +834,7 @@
         dayName,
         type,
         (typeof e.pauseMin === 'number') ? String(e.pauseMin) : '',
-        e.overdrive ? '1' : '',
+        (e.exactStart || e.overdrive) ? '1' : '',
         settings.location || '',
         String(settings.hoursPerDay)
       ]);
@@ -863,7 +863,7 @@
     const idxEnd = header.findIndex(h => /^ende$/i.test(h));
     const idxType = header.findIndex(h => /(typ|art)/i.test(h));
     const idxPause = header.findIndex(h => /pause/i.test(h));
-    const idxOverdrive = header.findIndex(h => /overdrive/i.test(h));
+    const idxExactStart = header.findIndex(h => /(exakt|override|overdrive)/i.test(h));
     if (idxDate < 0 || idxStart < 0) return [];
 
     const out = [];
@@ -897,7 +897,7 @@
           if (Number.isFinite(n) && n >= 0) pauseMin = Math.round(n);
         }
       }
-      const overdrive = idxOverdrive >= 0 ? ((cols[idxOverdrive] || '').trim() === '1' || /true/i.test((cols[idxOverdrive] || '').trim())) : false;
+      const exactStart = idxExactStart >= 0 ? ((cols[idxExactStart] || '').trim() === '1' || /true/i.test((cols[idxExactStart] || '').trim())) : false;
 
       out.push({
         id: crypto.randomUUID(),
@@ -905,7 +905,7 @@
         end: end ? end.toISOString() : undefined,
         type,
         pauseMin,
-        overdrive: type === 'work' ? overdrive : undefined
+        exactStart: type === 'work' ? exactStart : undefined
       });
     }
     return out;
@@ -972,14 +972,14 @@
         const typeRaw = typeof item.type === 'string' ? item.type : '';
         const type = (typeRaw === 'u' || typeRaw === 'f' || typeRaw === 'work') ? typeRaw : 'work';
         const pauseMin = Number.isFinite(item.pauseMin) && item.pauseMin >= 0 ? Math.round(item.pauseMin) : undefined;
-        const overdrive = !!item.overdrive;
+        const exactStart = !!(item.exactStart || item.overdrive);
         result.push({
           id: typeof item.id === 'string' && item.id ? item.id : crypto.randomUUID(),
           start: start.toISOString(),
           end: end ? end.toISOString() : undefined,
           type,
           pauseMin,
-          overdrive: type === 'work' ? overdrive : undefined
+          exactStart: type === 'work' ? exactStart : undefined
         });
       }
 
@@ -1122,9 +1122,9 @@
     return normalizeSettings(out) || { ...DEFAULT_SETTINGS };
   }
 
-  function applyDienstbeginnRounding(date, settingsObj, overdrive) {
+  function applyDienstbeginnRounding(date, settingsObj, exactStart) {
     if (!settingsObj || !settingsObj.dienstbeginnEnabled) return date;
-    if (overdrive) return date;
+    if (exactStart) return date;
     const t = parseTimeHHMM(settingsObj.dienstbeginnTime || DEFAULT_SETTINGS.dienstbeginnTime);
     if (!t) return date;
     const scheduled = new Date(date.getFullYear(), date.getMonth(), date.getDate(), t.h, t.min, 0, 0);
@@ -1187,11 +1187,11 @@
     fromRow.hidden = !isWork;
     toRow.hidden = !isWork;
     pauseRow.hidden = !isWork;
-    overdriveRow.hidden = !isWork || !settings.dienstbeginnEnabled;
+    exactStartRow.hidden = !isWork || !settings.dienstbeginnEnabled;
     if (!isWork) {
       toInput.value = '';
       pauseInput.value = '';
-      overdriveInput.checked = false;
+      exactStartInput.checked = false;
     }
   }
 

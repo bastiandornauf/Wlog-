@@ -98,7 +98,7 @@
           <select id="typeInput">
             <option value="work">Arbeit</option>
             <option value="u">U (Urlaub)</option>
-            <option value="f">F (Frei/Feiertag)</option>
+            <option value="f">F (Frei)</option>
           </select>
         </label>
         <label id="dateRow">
@@ -117,9 +117,9 @@
           <span>Pause (Min)</span>
           <input type="number" id="pauseInput" min="0" step="1" placeholder="(Standard)">
         </label>
-        <label class="checkbox-row" id="overdriveRow">
-          <input type="checkbox" id="overdriveInput">
-          <span>Overdrive (Dienstbeginn-Rundung ignorieren)</span>
+        <label class="checkbox-row" id="exactStartRow">
+          <input type="checkbox" id="exactStartInput">
+          <span>Benutze exakte Startzeit (Dienstbeginn-Rundung aus)</span>
         </label>
         <div class="dialog-actions">
           <button value="cancel" class="btn ghost">Abbrechen</button>
