@@ -18,7 +18,10 @@
   <body>
     <header class="app-header">
       <h1>WLOG</h1>
-      <button id="installBtn" class="btn ghost" hidden>Installieren</button>
+      <div class="flex gap center">
+        <button id="settingsBtn" class="btn ghost" type="button">Einstellungen</button>
+        <button id="installBtn" class="btn ghost" hidden>Installieren</button>
+      </div>
     </header>
 
     <main class="container">
@@ -63,7 +66,7 @@
           <strong id="surchargeSum">00:00</strong>
         </div>
         <div class="sum-row">
-          <span>Erwartet (8,5h/Werktag)</span>
+          <span id="expectedLabel">Erwartet (8,5h/Werktag)</span>
           <strong id="expectedSum">00:00</strong>
         </div>
         <div class="sum-row">
@@ -91,17 +94,123 @@
       <form method="dialog" id="editForm" class="dialog-body">
         <h3 id="dialogTitle">Eintrag bearbeiten</h3>
         <label>
+          <span>Typ</span>
+          <select id="typeInput">
+            <option value="work">Arbeit</option>
+            <option value="u">U (Urlaub)</option>
+            <option value="f">F (Frei/Feiertag)</option>
+          </select>
+        </label>
+        <label id="dateRow">
+          <span>Datum</span>
+          <input type="date" id="dateInput" required>
+        </label>
+        <label id="fromRow">
           <span>Von</span>
           <input type="datetime-local" id="fromInput" required>
         </label>
-        <label>
+        <label id="toRow">
           <span>Bis</span>
           <input type="datetime-local" id="toInput">
+        </label>
+        <label id="pauseRow">
+          <span>Pause (Min)</span>
+          <input type="number" id="pauseInput" min="0" step="1" placeholder="(Standard)">
+        </label>
+        <label class="checkbox-row" id="overdriveRow">
+          <input type="checkbox" id="overdriveInput">
+          <span>Overdrive (Dienstbeginn-Rundung ignorieren)</span>
         </label>
         <div class="dialog-actions">
           <button value="cancel" class="btn ghost">Abbrechen</button>
           <button id="deleteEntryBtn" class="btn danger" type="button">Löschen</button>
           <button id="saveEntryBtn" class="primary" value="default">Speichern</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settingsDialog">
+      <form method="dialog" id="settingsForm" class="dialog-body">
+        <h3>Einstellungen</h3>
+        <label>
+          <span>Ort (frei)</span>
+          <input type="text" id="settingLocation" placeholder="z.B. Standort / Abteilung">
+        </label>
+        <label>
+          <span>Bundesland (Feiertage)</span>
+          <select id="settingState">
+            <option value="bw">Baden-Württemberg</option>
+            <option value="by">Bayern</option>
+            <option value="be">Berlin</option>
+            <option value="bb">Brandenburg</option>
+            <option value="hb">Bremen</option>
+            <option value="hh">Hamburg</option>
+            <option value="he">Hessen</option>
+            <option value="mv">Mecklenburg-Vorpommern</option>
+            <option value="ni">Niedersachsen</option>
+            <option value="nw">Nordrhein-Westfalen</option>
+            <option value="rp">Rheinland-Pfalz</option>
+            <option value="sl">Saarland</option>
+            <option value="sn">Sachsen</option>
+            <option value="st">Sachsen-Anhalt</option>
+            <option value="sh">Schleswig-Holstein</option>
+            <option value="th">Thüringen</option>
+          </select>
+        </label>
+        <label>
+          <span>Soll-Arbeitszeit (Std/Werktag)</span>
+          <input type="number" id="settingHoursPerDay" min="0" step="0.25">
+        </label>
+        <label>
+          <span>Standard-Pause (Min)</span>
+          <input type="number" id="settingDefaultPause" min="0" step="1">
+        </label>
+
+        <div class="divider"></div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="settingDienstbeginnEnabled">
+          <span>Dienstbeginn-Modus aktiv</span>
+        </label>
+        <div class="grid2" id="dienstbeginnGrid">
+          <label>
+            <span>Dienstbeginn (Uhrzeit)</span>
+            <input type="time" id="settingDienstbeginnTime">
+          </label>
+          <label>
+            <span>Früher einstempeln bis (Min)</span>
+            <input type="number" id="settingDienstbeginnEarly" min="0" step="1">
+          </label>
+        </div>
+
+        <div class="divider"></div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="settingSurchargeEnabled">
+          <span>Zuschläge aktiv</span>
+        </label>
+        <div class="grid2" id="surchargeGrid">
+          <label>
+            <span>Nacht von</span>
+            <input type="time" id="settingNightFrom">
+          </label>
+          <label>
+            <span>Nacht bis</span>
+            <input type="time" id="settingNightTo">
+          </label>
+        </div>
+        <label class="checkbox-row" id="settingSundayHolidayRow">
+          <input type="checkbox" id="settingSundayHoliday">
+          <span>Sonntag/Feiertag als Zuschlag-Zeit</span>
+        </label>
+
+        <div class="divider"></div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="settingExcludeHolidaysFromExpected">
+          <span>Feiertage vom Soll abziehen (wie bisher)</span>
+        </label>
+
+        <div class="dialog-actions">
+          <button value="cancel" class="btn ghost">Abbrechen</button>
+          <button id="saveSettingsBtn" class="primary" value="default">Speichern</button>
         </div>
       </form>
     </dialog>

@@ -2,8 +2,27 @@
   'use strict';
 
   const STORAGE_KEY = 'zeit.entries.v1';
+  const SETTINGS_KEY = 'zeit.settings.v1';
   const HOLIDAY_CACHE_PREFIX = 'zeit.holidays.'; // zeit.holidays.{state}.{year}
-  const STATE_CODE = 'nw'; // TODO: make configurable if needed
+
+  const DEFAULT_SETTINGS = {
+    location: '',
+    stateCode: 'nw',
+    hoursPerDay: 8.5,
+    defaultPauseMinutes: 0,
+
+    dienstbeginnEnabled: false,
+    dienstbeginnTime: '08:00',
+    dienstbeginnEarlyMinutes: 20,
+
+    surchargeEnabled: true,
+    surchargeNightFrom: '22:00',
+    surchargeNightTo: '05:00',
+    surchargeSundayHoliday: true,
+
+    // current behavior: subtract public holidays from expected target time
+    excludePublicHolidaysFromExpected: true
+  };
   /** @type {HTMLButtonElement} */
   const toggleBtn = document.getElementById('toggleBtn');
   /** @type {HTMLDivElement} */
@@ -34,6 +53,8 @@
   const nowDate = document.getElementById('nowDate');
   /** @type {HTMLButtonElement} */
   const installBtn = document.getElementById('installBtn');
+  /** @type {HTMLButtonElement} */
+  const settingsBtn = document.getElementById('settingsBtn');
   /** @type {HTMLUListElement} */
   const monthList = document.getElementById('monthList');
   /** @type {HTMLSpanElement} */
@@ -44,20 +65,45 @@
   const expectedSum = document.getElementById('expectedSum');
   /** @type {HTMLSpanElement} */
   const deltaSum = document.getElementById('deltaSum');
+  /** @type {HTMLSpanElement|null} */
+  const expectedLabel = document.getElementById('expectedLabel');
 
   /** @type {HTMLDialogElement} */
   const editDialog = document.getElementById('editDialog');
+  /** @type {HTMLSelectElement} */
+  const typeInput = document.getElementById('typeInput');
+  /** @type {HTMLInputElement} */
+  const dateInput = document.getElementById('dateInput');
   /** @type {HTMLInputElement} */
   const fromInput = document.getElementById('fromInput');
   /** @type {HTMLInputElement} */
   const toInput = document.getElementById('toInput');
+  /** @type {HTMLInputElement} */
+  const pauseInput = document.getElementById('pauseInput');
+  /** @type {HTMLInputElement} */
+  const overdriveInput = document.getElementById('overdriveInput');
+  /** @type {HTMLElement} */
+  const dateRow = document.getElementById('dateRow');
+  /** @type {HTMLElement} */
+  const fromRow = document.getElementById('fromRow');
+  /** @type {HTMLElement} */
+  const toRow = document.getElementById('toRow');
+  /** @type {HTMLElement} */
+  const pauseRow = document.getElementById('pauseRow');
+  /** @type {HTMLElement} */
+  const overdriveRow = document.getElementById('overdriveRow');
   /** @type {HTMLButtonElement} */
   const deleteEntryBtn = document.getElementById('deleteEntryBtn');
   /** @type {HTMLButtonElement} */
   const saveEntryBtn = document.getElementById('saveEntryBtn');
+  /** @type {HTMLFormElement} */
+  const editForm = document.getElementById('editForm');
+  editForm.addEventListener('submit', (ev) => ev.preventDefault());
 
-  /** @type {{id:string, start:string, end?:string}[]} */
+  /** @type {{id:string, start:string, end?:string, type?:'work'|'u'|'f', pauseMin?:number, overdrive?:boolean}[]} */
   let entries = loadEntries();
+  /** @type {typeof DEFAULT_SETTINGS} */
+  let settings = loadSettings();
   /** @type {string|null} */
   let editingId = null;
 
@@ -90,6 +136,56 @@
   // Initial UI state
   refreshUI();
 
+  // Settings dialog
+  /** @type {HTMLDialogElement} */
+  const settingsDialog = document.getElementById('settingsDialog');
+  /** @type {HTMLFormElement} */
+  const settingsForm = document.getElementById('settingsForm');
+  /** @type {HTMLInputElement} */
+  const settingLocation = document.getElementById('settingLocation');
+  /** @type {HTMLSelectElement} */
+  const settingState = document.getElementById('settingState');
+  /** @type {HTMLInputElement} */
+  const settingHoursPerDay = document.getElementById('settingHoursPerDay');
+  /** @type {HTMLInputElement} */
+  const settingDefaultPause = document.getElementById('settingDefaultPause');
+  /** @type {HTMLInputElement} */
+  const settingDienstbeginnEnabled = document.getElementById('settingDienstbeginnEnabled');
+  /** @type {HTMLInputElement} */
+  const settingDienstbeginnTime = document.getElementById('settingDienstbeginnTime');
+  /** @type {HTMLInputElement} */
+  const settingDienstbeginnEarly = document.getElementById('settingDienstbeginnEarly');
+  /** @type {HTMLInputElement} */
+  const settingSurchargeEnabled = document.getElementById('settingSurchargeEnabled');
+  /** @type {HTMLInputElement} */
+  const settingNightFrom = document.getElementById('settingNightFrom');
+  /** @type {HTMLInputElement} */
+  const settingNightTo = document.getElementById('settingNightTo');
+  /** @type {HTMLInputElement} */
+  const settingSundayHoliday = document.getElementById('settingSundayHoliday');
+  /** @type {HTMLInputElement} */
+  const settingExcludeHolidaysFromExpected = document.getElementById('settingExcludeHolidaysFromExpected');
+
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      openSettings();
+    });
+  }
+
+  settingsForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+  });
+
+  const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+  saveSettingsBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    settings = readSettingsFromForm();
+    saveSettings(settings);
+    announce('Einstellungen gespeichert');
+    try { settingsDialog.close(); } catch {}
+    refreshUI();
+  });
+
   toggleBtn.addEventListener('click', () => {
     const running = getRunningEntry();
     if (running) {
@@ -97,7 +193,9 @@
       saveEntries(entries);
       announce('Stopp gespeichert');
     } else {
-      entries.push({ id: crypto.randomUUID(), start: new Date().toISOString() });
+      const now = new Date();
+      const rounded = applyDienstbeginnRounding(now, settings, false);
+      entries.push({ id: crypto.randomUUID(), start: rounded.toISOString(), type: 'work' });
       saveEntries(entries);
       announce('Start gespeichert');
     }
@@ -105,7 +203,12 @@
   });
 
   addManualBtn.addEventListener('click', () => {
-    openEditor({ id: crypto.randomUUID(), start: new Date().toISOString(), end: new Date().toISOString() }, true);
+    openEditor({
+      id: crypto.randomUUID(),
+      start: new Date().toISOString(),
+      end: new Date().toISOString(),
+      type: 'work'
+    }, true);
   });
 
   monthInput.addEventListener('change', () => {
@@ -160,7 +263,7 @@
 
   backupJsonBtn.addEventListener('click', () => {
     try {
-      const payload = { version: 1, exportedAt: new Date().toISOString(), entries };
+      const payload = { version: 2, exportedAt: new Date().toISOString(), settings, entries };
       const json = JSON.stringify(payload, null, 2);
       const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -188,7 +291,8 @@
     try {
       const text = await file.text();
       const data = JSON.parse(text);
-      const imported = normalizeBackupData(data);
+      const normalized = normalizeBackupData(data);
+      const imported = normalized.entries;
       if (!imported.length) {
         announce('Keine gültigen Einträge in JSON');
         return;
@@ -200,6 +304,15 @@
         entries = entries.concat(imported);
       }
       saveEntries(entries);
+
+      if (normalized.settings) {
+        const apply = confirm('Einstellungen aus dem Backup übernehmen?');
+        if (apply) {
+          settings = normalized.settings;
+          saveSettings(settings);
+        }
+      }
+
       refreshUI();
       announce('Wiederherstellung abgeschlossen');
     } catch (e) {
@@ -218,23 +331,66 @@
 
   saveEntryBtn.addEventListener('click', (ev) => {
     ev.preventDefault();
-    if (!fromInput.value) return;
-    const start = new Date(fromInput.value);
-    const end = toInput.value ? new Date(toInput.value) : null;
-    if (end && end < start) {
-      toInput.setCustomValidity('Ende liegt vor Start');
-      toInput.reportValidity();
-      return;
+    const type = /** @type {'work'|'u'|'f'} */ (typeInput.value || 'work');
+
+    let start = null;
+    let end = null;
+    let pauseMin = undefined;
+    let overdrive = false;
+
+    if (type === 'work') {
+      if (!fromInput.value) return;
+      start = new Date(fromInput.value);
+      end = toInput.value ? new Date(toInput.value) : null;
+      if (end && end < start) {
+        toInput.setCustomValidity('Ende liegt vor Start');
+        toInput.reportValidity();
+        return;
+      } else {
+        toInput.setCustomValidity('');
+      }
+      const pauseRaw = (pauseInput.value || '').trim();
+      if (pauseRaw !== '') {
+        const n = Number(pauseRaw);
+        if (!Number.isFinite(n) || n < 0) {
+          pauseInput.setCustomValidity('Ungültige Pause');
+          pauseInput.reportValidity();
+          return;
+        }
+        pauseInput.setCustomValidity('');
+        pauseMin = Math.round(n);
+      } else {
+        pauseInput.setCustomValidity('');
+      }
+      overdrive = !!overdriveInput.checked;
+      start = applyDienstbeginnRounding(start, settings, overdrive);
     } else {
-      toInput.setCustomValidity('');
+      if (!dateInput.value) return;
+      start = parseLocalDate(dateInput.value);
+      end = null;
     }
+
     if (editingId) {
       const idx = entries.findIndex(e => e.id === editingId);
       if (idx >= 0) {
-        entries[idx] = { id: editingId, start: start.toISOString(), end: end ? end.toISOString() : undefined };
+        entries[idx] = {
+          id: editingId,
+          type,
+          start: start.toISOString(),
+          end: end ? end.toISOString() : undefined,
+          pauseMin,
+          overdrive: type === 'work' ? overdrive : undefined
+        };
       }
     } else {
-      entries.push({ id: crypto.randomUUID(), start: start.toISOString(), end: end ? end.toISOString() : undefined });
+      entries.push({
+        id: crypto.randomUUID(),
+        type,
+        start: start.toISOString(),
+        end: end ? end.toISOString() : undefined,
+        pauseMin,
+        overdrive: type === 'work' ? overdrive : undefined
+      });
     }
     saveEntries(entries);
     closeEditor();
@@ -276,16 +432,26 @@
       const li = document.createElement('li');
       const start = new Date(e.start);
       const end = e.end ? new Date(e.end) : null;
-      const durationMs = end ? (end - start) : 0;
+      const durationMs = getEntryNetMs(e, settings, start, end);
       totalMs += durationMs;
 
       const title = document.createElement('div');
       title.className = 'row-strong';
-      title.textContent = `${fmtTime(start)}${end ? ' – ' + fmtTime(end) : ' – …'}`;
+      const type = e.type || 'work';
+      if (type === 'u') {
+        li.classList.add('daytype-u');
+        title.textContent = `U (Urlaub)`;
+      } else if (type === 'f') {
+        li.classList.add('daytype-f');
+        title.textContent = `F (Frei/Feiertag)`;
+      } else {
+        title.textContent = `${fmtTime(start)}${end ? ' – ' + fmtTime(end) : ' – …'}`;
+      }
 
       const meta = document.createElement('div');
       meta.className = 'row-meta';
-      meta.textContent = `${start.toLocaleDateString()} • ${fmtDuration(durationMs)}`;
+      const pauseInfo = (type === 'work' && end) ? formatPauseInfo(e, settings) : '';
+      meta.textContent = `${start.toLocaleDateString()} • ${fmtDuration(durationMs)}${pauseInfo}`;
 
       const edit = document.createElement('button');
       edit.className = 'btn';
@@ -312,17 +478,17 @@
     monthList.innerHTML = '';
     let totalMs = 0;
     let surchargeMs = 0;
-    const holidaySet = getHolidaySetSync(year, STATE_CODE);
+    const holidaySet = getHolidaySetSync(year, settings.stateCode);
 
     for (const e of monthEntries) {
       const li = document.createElement('li');
       const startTime = new Date(e.start);
       const endTime = e.end ? new Date(e.end) : null;
-      const durationMs = endTime ? (endTime - startTime) : 0;
+      const durationMs = getEntryNetMs(e, settings, startTime, endTime);
       totalMs += durationMs;
 
       // Calculate surcharge time
-      const surcharge = calculateSurcharge(startTime, endTime);
+      const surcharge = calculateSurcharge(startTime, endTime, settings);
       surchargeMs += surcharge;
       
       
@@ -338,13 +504,23 @@
 
       const title = document.createElement('div');
       title.className = 'row-strong';
-      title.textContent = `${fmtTime(startTime)}${endTime ? ' – ' + fmtTime(endTime) : ' – …'}`;
+      const type = e.type || 'work';
+      if (type === 'u') {
+        li.classList.add('daytype-u');
+        title.textContent = `U (Urlaub)`;
+      } else if (type === 'f') {
+        li.classList.add('daytype-f');
+        title.textContent = `F (Frei/Feiertag)`;
+      } else {
+        title.textContent = `${fmtTime(startTime)}${endTime ? ' – ' + fmtTime(endTime) : ' – …'}`;
+      }
 
       const meta = document.createElement('div');
       meta.className = 'row-meta';
       const dayName = startTime.toLocaleDateString('de-DE', { weekday: 'long' });
       const holidayEmoji = isHoliday ? '🎉 ' : '';
-      meta.textContent = `${startTime.toLocaleDateString()} (${holidayEmoji}${dayName}) • ${fmtDuration(durationMs)}`;
+      const pauseInfo = (type === 'work' && endTime) ? formatPauseInfo(e, settings) : '';
+      meta.textContent = `${startTime.toLocaleDateString()} (${holidayEmoji}${dayName}) • ${fmtDuration(durationMs)}${pauseInfo}`;
 
       const edit = document.createElement('button');
       edit.className = 'btn';
@@ -361,14 +537,17 @@
     surchargeSum.textContent = fmtDuration(surchargeMs);
 
     // Expected working time: start with nationwide holidays for quick display
-    const nationwideExpectedMs = calculateExpectedMonthMs(year, month, getGermanPublicHolidaySet(year));
+    const nationwideExpectedMs = calculateExpectedMonthMs(year, month, getGermanPublicHolidaySet(year), settings);
     expectedSum.textContent = fmtDuration(nationwideExpectedMs);
     deltaSum.textContent = fmtSignedDuration(totalMs - nationwideExpectedMs);
+    if (expectedLabel) {
+      expectedLabel.textContent = `Erwartet (${String(settings.hoursPerDay).replace('.', ',')}h/Werktag)`;
+    }
 
     // Refine asynchronously using state-specific holidays
-    loadStateHolidaySet(year, STATE_CODE).then((stateHolidaySet) => {
+    loadStateHolidaySet(year, settings.stateCode).then((stateHolidaySet) => {
       if (!stateHolidaySet) return;
-      const refinedExpected = calculateExpectedMonthMs(year, month, stateHolidaySet);
+      const refinedExpected = calculateExpectedMonthMs(year, month, stateHolidaySet, settings);
       expectedSum.textContent = fmtDuration(refinedExpected);
       deltaSum.textContent = fmtSignedDuration(totalMs - refinedExpected);
     }).catch(() => {
@@ -376,9 +555,9 @@
     });
   }
 
-  function calculateExpectedMonthMs(year, month, holidaySetOptional) {
+  function calculateExpectedMonthMs(year, month, holidaySetOptional, settingsObj) {
     const msPerHour = 60 * 60 * 1000;
-    const hoursPerDay = 8.5;
+    const hoursPerDay = Number(settingsObj && settingsObj.hoursPerDay) || DEFAULT_SETTINGS.hoursPerDay;
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
     const holidays = holidaySetOptional || getGermanPublicHolidaySet(year);
@@ -392,8 +571,10 @@
     for (let d = new Date(start); d < capEnd; d.setDate(d.getDate() + 1)) {
       const weekday = d.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
       if (weekday >= 1 && weekday <= 5) {
-        const key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        if (!holidays.has(key)) {
+        if (settingsObj && settingsObj.excludePublicHolidaysFromExpected) {
+          const key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+          if (!holidays.has(key)) expectedDays += 1;
+        } else {
           expectedDays += 1;
         }
       }
@@ -522,8 +703,9 @@
     return `${sign}${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}`;
   }
 
-  function calculateSurcharge(startTime, endTime) {
+  function calculateSurcharge(startTime, endTime, settingsObj) {
     if (!endTime) return 0;
+    if (!settingsObj || !settingsObj.surchargeEnabled) return 0;
     
     let surchargeMs = 0;
     const start = new Date(startTime);
@@ -536,7 +718,7 @@
     const holidaySetByYear = new Map();
     const ensureHolidaySet = (year) => {
       if (!holidaySetByYear.has(year)) {
-        holidaySetByYear.set(year, getHolidaySetSync(year, STATE_CODE));
+        holidaySetByYear.set(year, getHolidaySetSync(year, settingsObj.stateCode));
       }
       return holidaySetByYear.get(year);
     };
@@ -556,23 +738,29 @@
       const key = new Date(current.getFullYear(), current.getMonth(), current.getDate()).getTime();
       const isHoliday = set.has(key);
       
-      if (isSunday || isHoliday) {
+      if (settingsObj.surchargeSundayHoliday && (isSunday || isHoliday)) {
         // Full day surcharge for Sunday or public holiday
         surchargeMs += dayEnd - dayStart;
       } else {
-        // Check for night work (22:00 - 05:00 next day)
-        const nightStart = new Date(current);
-        nightStart.setHours(22, 0, 0, 0);
-        const nightEnd = new Date(nextDay);
-        nightEnd.setHours(5, 0, 0, 0);
-        
-        // Calculate overlap between work time and night time
-        const nightWorkStart = new Date(Math.max(dayStart.getTime(), nightStart.getTime()));
-        const nightWorkEnd = new Date(Math.min(dayEnd.getTime(), nightEnd.getTime()));
-        
-        if (nightWorkStart < nightWorkEnd) {
-          const nightSurcharge = nightWorkEnd - nightWorkStart;
-          surchargeMs += nightSurcharge;
+        // Check for night work (configurable)
+        const nightFrom = parseTimeHHMM(settingsObj.surchargeNightFrom || DEFAULT_SETTINGS.surchargeNightFrom);
+        const nightTo = parseTimeHHMM(settingsObj.surchargeNightTo || DEFAULT_SETTINGS.surchargeNightTo);
+        if (nightFrom && nightTo) {
+          const crossMidnight = (nightFrom.h * 60 + nightFrom.min) > (nightTo.h * 60 + nightTo.min);
+          if (crossMidnight) {
+            // Part A: nightFrom -> 24:00 (current day)
+            const aStart = new Date(current); aStart.setHours(nightFrom.h, nightFrom.min, 0, 0);
+            const aEnd = new Date(nextDay); aEnd.setHours(0, 0, 0, 0);
+            surchargeMs += overlapMs(dayStart, dayEnd, aStart, aEnd);
+            // Part B: 00:00 -> nightTo (current day)
+            const bStart = new Date(current); bStart.setHours(0, 0, 0, 0);
+            const bEnd = new Date(current); bEnd.setHours(nightTo.h, nightTo.min, 0, 0);
+            surchargeMs += overlapMs(dayStart, dayEnd, bStart, bEnd);
+          } else {
+            const nStart = new Date(current); nStart.setHours(nightFrom.h, nightFrom.min, 0, 0);
+            const nEnd = new Date(current); nEnd.setHours(nightTo.h, nightTo.min, 0, 0);
+            surchargeMs += overlapMs(dayStart, dayEnd, nStart, nEnd);
+          }
         }
       }
       
@@ -584,8 +772,15 @@
 
   function openEditor(entry, isNew) {
     editingId = isNew ? null : entry.id;
-    fromInput.value = toLocalInputValue(new Date(entry.start));
+    const type = entry.type || 'work';
+    typeInput.value = type;
+    const start = new Date(entry.start);
+    dateInput.value = toLocalDateInputValue(start);
+    fromInput.value = toLocalInputValue(start);
     toInput.value = entry.end ? toLocalInputValue(new Date(entry.end)) : '';
+    pauseInput.value = (typeof entry.pauseMin === 'number') ? String(entry.pauseMin) : '';
+    overdriveInput.checked = !!entry.overdrive;
+    updateEditorMode();
     editDialog.showModal();
   }
 
@@ -615,7 +810,7 @@
   function buildMonthlyCsv(allEntries, year, month) {
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
-    const rows = [['Datum','Start','Ende','Dauer (hh:mm)','Zuschläge (hh:mm)','Wochentag']];
+    const rows = [['Datum','Start','Ende','Dauer (hh:mm)','Zuschläge (hh:mm)','Wochentag','Typ','Pause (Min)','Overdrive','Ort','Soll (Std/Tag)']];
     let totalMs = 0;
     let totalSurchargeMs = 0;
     const monthEntries = allEntries
@@ -624,18 +819,24 @@
     for (const e of monthEntries) {
       const s = new Date(e.start);
       const t = e.end ? new Date(e.end) : null;
-      const durMs = t ? (t - s) : 0;
-      const surchargeMs = calculateSurcharge(s, t);
+      const durMs = getEntryNetMs(e, settings, s, t);
+      const surchargeMs = calculateSurcharge(s, t, settings);
       const dayName = s.toLocaleDateString('de-DE', { weekday: 'long' });
+      const type = e.type || 'work';
       totalMs += durMs;
       totalSurchargeMs += surchargeMs;
       rows.push([
         s.toLocaleDateString(),
-        fmtTime(s),
-        t ? fmtTime(t) : '',
+        (type === 'work') ? fmtTime(s) : '',
+        (type === 'work' && t) ? fmtTime(t) : '',
         fmtDuration(durMs),
         fmtDuration(surchargeMs),
-        dayName
+        dayName,
+        type,
+        (typeof e.pauseMin === 'number') ? String(e.pauseMin) : '',
+        e.overdrive ? '1' : '',
+        settings.location || '',
+        String(settings.hoursPerDay)
       ]);
     }
     rows.push([]);
@@ -660,6 +861,9 @@
     const idxDate = header.findIndex(h => /datum/i.test(h));
     const idxStart = header.findIndex(h => /^start$/i.test(h));
     const idxEnd = header.findIndex(h => /^ende$/i.test(h));
+    const idxType = header.findIndex(h => /(typ|art)/i.test(h));
+    const idxPause = header.findIndex(h => /pause/i.test(h));
+    const idxOverdrive = header.findIndex(h => /overdrive/i.test(h));
     if (idxDate < 0 || idxStart < 0) return [];
 
     const out = [];
@@ -669,16 +873,39 @@
       const dateStr = (cols[idxDate] || '').trim();
       const startStr = (cols[idxStart] || '').trim();
       const endStr = (cols[idxEnd] || '').trim();
-      if (!dateStr || !startStr) continue;
+      const typeRaw = idxType >= 0 ? (cols[idxType] || '').trim().toLowerCase() : '';
+      const type = (typeRaw === 'u' || typeRaw === 'f' || typeRaw === 'work') ? typeRaw : 'work';
+      if (!dateStr) continue;
 
-      const start = parseLocalDateTime(dateStr, startStr);
-      const end = endStr ? parseLocalDateTime(dateStr, endStr) : null;
-      if (!start) continue;
+      let start = null;
+      let end = null;
+      if (type === 'work') {
+        if (!startStr) continue;
+        start = parseLocalDateTime(dateStr, startStr);
+        end = endStr ? parseLocalDateTime(dateStr, endStr) : null;
+        if (!start) continue;
+      } else {
+        start = parseLocalDate(dateStr);
+        end = null;
+      }
+
+      let pauseMin = undefined;
+      if (idxPause >= 0) {
+        const p = (cols[idxPause] || '').trim();
+        if (p !== '') {
+          const n = Number(p);
+          if (Number.isFinite(n) && n >= 0) pauseMin = Math.round(n);
+        }
+      }
+      const overdrive = idxOverdrive >= 0 ? ((cols[idxOverdrive] || '').trim() === '1' || /true/i.test((cols[idxOverdrive] || '').trim())) : false;
 
       out.push({
         id: crypto.randomUUID(),
         start: start.toISOString(),
-        end: end ? end.toISOString() : undefined
+        end: end ? end.toISOString() : undefined,
+        type,
+        pauseMin,
+        overdrive: type === 'work' ? overdrive : undefined
       });
     }
     return out;
@@ -742,15 +969,24 @@
         const start = safeDate(item.start);
         if (!start) continue;
         const end = item.end ? safeDate(item.end) : null;
+        const typeRaw = typeof item.type === 'string' ? item.type : '';
+        const type = (typeRaw === 'u' || typeRaw === 'f' || typeRaw === 'work') ? typeRaw : 'work';
+        const pauseMin = Number.isFinite(item.pauseMin) && item.pauseMin >= 0 ? Math.round(item.pauseMin) : undefined;
+        const overdrive = !!item.overdrive;
         result.push({
           id: typeof item.id === 'string' && item.id ? item.id : crypto.randomUUID(),
           start: start.toISOString(),
-          end: end ? end.toISOString() : undefined
+          end: end ? end.toISOString() : undefined,
+          type,
+          pauseMin,
+          overdrive: type === 'work' ? overdrive : undefined
         });
       }
-      return result;
+
+      const s = (data && typeof data === 'object' && data.settings) ? normalizeSettings(data.settings) : null;
+      return { entries: result, settings: s };
     } catch {
-      return [];
+      return { entries: [], settings: null };
     }
   }
 
@@ -784,6 +1020,14 @@
     return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
   }
 
+  function toLocalDateInputValue(date) {
+    const pad = (n) => String(n).padStart(2,'0');
+    const yyyy = date.getFullYear();
+    const MM = pad(date.getMonth()+1);
+    const dd = pad(date.getDate());
+    return `${yyyy}-${MM}-${dd}`;
+  }
+
   function loadEntries() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -796,6 +1040,169 @@
   function saveEntries(list) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
   }
+
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return { ...DEFAULT_SETTINGS };
+      const parsed = JSON.parse(raw);
+      return normalizeSettings(parsed) || { ...DEFAULT_SETTINGS };
+    } catch {
+      return { ...DEFAULT_SETTINGS };
+    }
+  }
+
+  function saveSettings(s) {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    } catch {}
+  }
+
+  function normalizeSettings(obj) {
+    if (!obj || typeof obj !== 'object') return null;
+    const out = { ...DEFAULT_SETTINGS };
+    if (typeof obj.location === 'string') out.location = obj.location;
+    if (typeof obj.stateCode === 'string' && /^[a-z]{2}$/.test(obj.stateCode)) out.stateCode = obj.stateCode;
+    if (Number.isFinite(obj.hoursPerDay) && obj.hoursPerDay >= 0) out.hoursPerDay = obj.hoursPerDay;
+    if (Number.isFinite(obj.defaultPauseMinutes) && obj.defaultPauseMinutes >= 0) out.defaultPauseMinutes = Math.round(obj.defaultPauseMinutes);
+
+    out.dienstbeginnEnabled = !!obj.dienstbeginnEnabled;
+    if (typeof obj.dienstbeginnTime === 'string' && parseTimeHHMM(obj.dienstbeginnTime)) out.dienstbeginnTime = obj.dienstbeginnTime;
+    if (Number.isFinite(obj.dienstbeginnEarlyMinutes) && obj.dienstbeginnEarlyMinutes >= 0) out.dienstbeginnEarlyMinutes = Math.round(obj.dienstbeginnEarlyMinutes);
+
+    out.surchargeEnabled = !!obj.surchargeEnabled;
+    if (typeof obj.surchargeNightFrom === 'string' && parseTimeHHMM(obj.surchargeNightFrom)) out.surchargeNightFrom = obj.surchargeNightFrom;
+    if (typeof obj.surchargeNightTo === 'string' && parseTimeHHMM(obj.surchargeNightTo)) out.surchargeNightTo = obj.surchargeNightTo;
+    out.surchargeSundayHoliday = (obj.surchargeSundayHoliday !== undefined) ? !!obj.surchargeSundayHoliday : DEFAULT_SETTINGS.surchargeSundayHoliday;
+
+    out.excludePublicHolidaysFromExpected = (obj.excludePublicHolidaysFromExpected !== undefined) ? !!obj.excludePublicHolidaysFromExpected : DEFAULT_SETTINGS.excludePublicHolidaysFromExpected;
+    return out;
+  }
+
+  function openSettings() {
+    // ensure latest settings from storage
+    settings = loadSettings();
+    settingLocation.value = settings.location || '';
+    settingState.value = settings.stateCode || DEFAULT_SETTINGS.stateCode;
+    settingHoursPerDay.value = String(settings.hoursPerDay);
+    settingDefaultPause.value = String(settings.defaultPauseMinutes);
+    settingDienstbeginnEnabled.checked = !!settings.dienstbeginnEnabled;
+    settingDienstbeginnTime.value = settings.dienstbeginnTime || DEFAULT_SETTINGS.dienstbeginnTime;
+    settingDienstbeginnEarly.value = String(settings.dienstbeginnEarlyMinutes);
+    settingSurchargeEnabled.checked = !!settings.surchargeEnabled;
+    settingNightFrom.value = settings.surchargeNightFrom || DEFAULT_SETTINGS.surchargeNightFrom;
+    settingNightTo.value = settings.surchargeNightTo || DEFAULT_SETTINGS.surchargeNightTo;
+    settingSundayHoliday.checked = !!settings.surchargeSundayHoliday;
+    settingExcludeHolidaysFromExpected.checked = !!settings.excludePublicHolidaysFromExpected;
+    settingsDialog.showModal();
+  }
+
+  function readSettingsFromForm() {
+    const out = { ...DEFAULT_SETTINGS };
+    out.location = (settingLocation.value || '').trim();
+    out.stateCode = (settingState.value || DEFAULT_SETTINGS.stateCode).trim().toLowerCase();
+
+    const hpd = Number(settingHoursPerDay.value);
+    out.hoursPerDay = (Number.isFinite(hpd) && hpd >= 0) ? hpd : DEFAULT_SETTINGS.hoursPerDay;
+
+    const dp = Number(settingDefaultPause.value);
+    out.defaultPauseMinutes = (Number.isFinite(dp) && dp >= 0) ? Math.round(dp) : DEFAULT_SETTINGS.defaultPauseMinutes;
+
+    out.dienstbeginnEnabled = !!settingDienstbeginnEnabled.checked;
+    out.dienstbeginnTime = settingDienstbeginnTime.value || DEFAULT_SETTINGS.dienstbeginnTime;
+    const early = Number(settingDienstbeginnEarly.value);
+    out.dienstbeginnEarlyMinutes = (Number.isFinite(early) && early >= 0) ? Math.round(early) : DEFAULT_SETTINGS.dienstbeginnEarlyMinutes;
+
+    out.surchargeEnabled = !!settingSurchargeEnabled.checked;
+    out.surchargeNightFrom = settingNightFrom.value || DEFAULT_SETTINGS.surchargeNightFrom;
+    out.surchargeNightTo = settingNightTo.value || DEFAULT_SETTINGS.surchargeNightTo;
+    out.surchargeSundayHoliday = !!settingSundayHoliday.checked;
+
+    out.excludePublicHolidaysFromExpected = !!settingExcludeHolidaysFromExpected.checked;
+    return normalizeSettings(out) || { ...DEFAULT_SETTINGS };
+  }
+
+  function applyDienstbeginnRounding(date, settingsObj, overdrive) {
+    if (!settingsObj || !settingsObj.dienstbeginnEnabled) return date;
+    if (overdrive) return date;
+    const t = parseTimeHHMM(settingsObj.dienstbeginnTime || DEFAULT_SETTINGS.dienstbeginnTime);
+    if (!t) return date;
+    const scheduled = new Date(date.getFullYear(), date.getMonth(), date.getDate(), t.h, t.min, 0, 0);
+    const diffMs = scheduled.getTime() - date.getTime();
+    const earlyLimitMs = Math.max(0, Number(settingsObj.dienstbeginnEarlyMinutes) || 0) * 60000;
+    if (diffMs > 0 && diffMs <= earlyLimitMs) return scheduled;
+    return date;
+  }
+
+  function parseLocalDate(value) {
+    // Accept yyyy-mm-dd or dd.mm.yyyy
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (iso) {
+      const y = parseInt(iso[1],10);
+      const m = parseInt(iso[2],10) - 1;
+      const d = parseInt(iso[3],10);
+      return new Date(y, m, d, 0, 0, 0, 0);
+    }
+    const de = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(value);
+    if (de) {
+      const d = parseInt(de[1],10);
+      const m = parseInt(de[2],10) - 1;
+      const y = parseInt(de[3],10);
+      return new Date(y, m, d, 0, 0, 0, 0);
+    }
+    return null;
+  }
+
+  function overlapMs(aStart, aEnd, bStart, bEnd) {
+    const s = Math.max(aStart.getTime(), bStart.getTime());
+    const e = Math.min(aEnd.getTime(), bEnd.getTime());
+    return e > s ? (e - s) : 0;
+  }
+
+  function getEntryNetMs(entry, settingsObj, startDate, endDate) {
+    const type = entry.type || 'work';
+    if (type === 'u' || type === 'f') {
+      const hours = Number(settingsObj && settingsObj.hoursPerDay) || DEFAULT_SETTINGS.hoursPerDay;
+      return hours * 60 * 60 * 1000;
+    }
+    if (!endDate) return 0;
+    const rawMs = endDate - startDate;
+    const pauseMin = (typeof entry.pauseMin === 'number') ? entry.pauseMin : (Number(settingsObj && settingsObj.defaultPauseMinutes) || 0);
+    const net = rawMs - (pauseMin * 60000);
+    return Math.max(0, net);
+  }
+
+  function formatPauseInfo(entry, settingsObj) {
+    const pauseMin = (typeof entry.pauseMin === 'number') ? entry.pauseMin : (Number(settingsObj && settingsObj.defaultPauseMinutes) || 0);
+    if (!pauseMin) return '';
+    return ` • Pause ${pauseMin}m`;
+  }
+
+  function updateEditorMode() {
+    const type = /** @type {'work'|'u'|'f'} */ (typeInput.value || 'work');
+    const isWork = type === 'work';
+    fromInput.toggleAttribute('required', isWork);
+    dateInput.toggleAttribute('required', !isWork);
+    dateRow.hidden = isWork;
+    fromRow.hidden = !isWork;
+    toRow.hidden = !isWork;
+    pauseRow.hidden = !isWork;
+    overdriveRow.hidden = !isWork || !settings.dienstbeginnEnabled;
+    if (!isWork) {
+      toInput.value = '';
+      pauseInput.value = '';
+      overdriveInput.checked = false;
+    }
+  }
+
+  typeInput.addEventListener('change', () => updateEditorMode());
+  fromInput.addEventListener('change', () => {
+    try {
+      if (!fromInput.value) return;
+      const d = new Date(fromInput.value);
+      dateInput.value = toLocalDateInputValue(d);
+    } catch {}
+  });
 
   function announce(text) {
     statusRow.textContent = text;

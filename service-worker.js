@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wlog-cache-v2';
+const CACHE_NAME = 'wlog-cache-v3';
 const ASSETS = [
   './',
   './index.html',
