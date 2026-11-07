@@ -13,7 +13,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>WLOG | PWA</title>
     <link rel="stylesheet" href="./styles.css">
-    <script src="https://unpkg.com/pulltorefreshjs@0.1.22/dist/index.umd.js"></script>
+    <script src="https://unpkg.com/pulltorefreshjs@0.1.22/dist/index.umd.js" defer></script>
   </head>
   <body>
     <header class="app-header">
@@ -61,10 +61,11 @@
           <span>Summe Monat</span>
           <strong id="monthSum">00:00</strong>
         </div>
-        <div class="sum-row">
+        <div class="sum-row" id="surchargeSumRow">
           <span>Zuschläge (Nacht/Sonntag)</span>
           <strong id="surchargeSum">00:00</strong>
         </div>
+        <div id="surchargeBreakdown"></div>
         <div class="sum-row">
           <span id="expectedLabel">Erwartet (8,5h/Werktag)</span>
           <strong id="expectedSum">00:00</strong>
@@ -187,20 +188,76 @@
           <input type="checkbox" id="settingSurchargeEnabled">
           <span>Zuschläge aktiv</span>
         </label>
-        <div class="grid2" id="surchargeGrid">
-          <label>
-            <span>Nacht von</span>
-            <input type="time" id="settingNightFrom">
-          </label>
-          <label>
-            <span>Nacht bis</span>
-            <input type="time" id="settingNightTo">
+        <label>
+          <span>Berechnung</span>
+          <select id="settingSurchargeMode">
+            <option value="simple">Einfach (eine Summe)</option>
+            <option value="tvoed">TVöD (§ 8, nach Arten getrennt)</option>
+          </select>
+        </label>
+        <div id="simpleSurchargeBox" class="settings-box">
+          <div class="grid2" id="surchargeGrid">
+            <label>
+              <span>Nacht von</span>
+              <input type="time" id="settingNightFrom">
+            </label>
+            <label>
+              <span>Nacht bis</span>
+              <input type="time" id="settingNightTo">
+            </label>
+          </div>
+          <label class="checkbox-row" id="settingSundayHolidayRow">
+            <input type="checkbox" id="settingSundayHoliday">
+            <span>Sonntag/Feiertag als Zuschlag-Zeit</span>
           </label>
         </div>
-        <label class="checkbox-row" id="settingSundayHolidayRow">
-          <input type="checkbox" id="settingSundayHoliday">
-          <span>Sonntag/Feiertag als Zuschlag-Zeit</span>
-        </label>
+        <div id="tvoedSurchargeBox" class="settings-box">
+          <div class="grid2">
+            <label>
+              <span>Nacht von</span>
+              <input type="time" id="settingTvNightFrom">
+            </label>
+            <label>
+              <span>Nacht bis</span>
+              <input type="time" id="settingTvNightTo">
+            </label>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingTvSunday">
+            <span>Sonntag (ganzer Tag)</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingTvHoliday">
+            <span>Feiertag (ganzer Tag)</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingTvXmas">
+            <span>24.12. / 31.12.</span>
+          </label>
+          <label>
+            <span>24.12. / 31.12. ab (Uhrzeit)</span>
+            <input type="time" id="settingTvXmasFrom">
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingTvSaturday">
+            <span>Samstag (aus bei Schicht-/Wechselschichtzulage)</span>
+          </label>
+          <div class="grid2">
+            <label>
+              <span>Samstag von</span>
+              <input type="time" id="settingTvSaturdayFrom">
+            </label>
+            <label>
+              <span>Samstag bis</span>
+              <input type="time" id="settingTvSaturdayTo">
+            </label>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="settingTvXmasReduceTarget">
+            <span>24.12. / 31.12. (Werktag) vom Soll abziehen</span>
+          </label>
+          <p class="hint">Nacht zählt zusätzlich. Bei Sonntag, Feiertag, 24./31.12. und Samstag zählt je Zeit nur die höchste Art (Feiertag &gt; 24./31.12. &gt; Sonntag &gt; Samstag). Pausen werden nicht abgezogen.</p>
+        </div>
 
         <div class="divider"></div>
         <label class="checkbox-row">

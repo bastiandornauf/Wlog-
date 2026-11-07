@@ -1,10 +1,11 @@
-const CACHE_NAME = 'wlog-cache-v3';
+const CACHE_NAME = 'wlog-cache-v4';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './manifest.webmanifest',
+  './favicon.ico',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];
@@ -23,18 +24,26 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Stale-while-revalidate for own files: answer from cache immediately,
+// fetch a fresh copy in the background so updates arrive on the next start.
+// Cross-origin requests (holiday API, CDN) are not intercepted.
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
+  if (new URL(request.url).origin !== self.location.origin) return;
+
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const cached = await cache.match(request, { ignoreSearch: request.mode === 'navigate' });
+      const network = fetch(request).then((response) => {
+        if (response.ok) cache.put(request, response.clone());
         return response;
-      }).catch(() => cached);
+      });
+      if (cached) {
+        event.waitUntil(network.catch(() => {}));
+        return cached;
+      }
+      return network;
     })
   );
 });
-

@@ -109,13 +109,6 @@ body {
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
-.list li.surcharge {
-  background: rgba(14, 165, 233, 0.1);
-  border-radius: 8px;
-  padding: 10px;
-  margin: 4px 0;
-  border: 1px solid rgba(14, 165, 233, 0.3);
-}
 .list li:last-child { border-bottom: none; }
 
 .row-meta { color: var(--muted); font-size: 12px; }
@@ -132,8 +125,11 @@ body {
 /* Highlighting for surcharge entries */
 .list li.surcharge {
   background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(14, 165, 233, 0.3);
   border-left: 3px solid #ffc107;
-  padding-left: 8px;
+  border-radius: 8px;
+  padding: 10px 10px 10px 8px;
+  margin: 4px 0;
 }
 
 .list li.surcharge .row-strong {
@@ -225,3 +221,6 @@ select {
   .now-time { font-size: 48px; }
 }
 
+.settings-box { display: grid; gap: 12px; }
+.hint { margin: 0; color: var(--muted); font-size: 12px; }
+.sum-row.sub { border-top: none; padding-top: 2px; margin-top: 2px; color: var(--muted); font-size: 14px; }

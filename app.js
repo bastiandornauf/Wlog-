@@ -20,9 +20,31 @@
     surchargeNightTo: '05:00',
     surchargeSundayHoliday: true,
 
+    // 'simple' = one sum (night window + Sunday/holiday), 'tvoed' = TVöD § 8 categories
+    surchargeMode: 'simple',
+    tvNightFrom: '21:00',
+    tvNightTo: '06:00',
+    tvSunday: true,
+    tvHoliday: true,
+    tvXmas: true,
+    tvXmasFrom: '06:00',
+    tvSaturday: false,
+    tvSaturdayFrom: '13:00',
+    tvSaturdayTo: '21:00',
+    tvXmasReduceTarget: true,
+
     // current behavior: subtract public holidays from expected target time
     excludePublicHolidaysFromExpected: true
   };
+  // Order = priority for the "only the highest" rule (night is counted on top)
+  const SURCHARGE_CATS = [
+    { key: 'night', label: 'Nacht', on: (s) => s.tvNightFrom !== s.tvNightTo },
+    { key: 'holiday', label: 'Feiertag', on: (s) => s.tvHoliday },
+    { key: 'xmas', label: '24.12./31.12.', on: (s) => s.tvXmas },
+    { key: 'sunday', label: 'Sonntag', on: (s) => s.tvSunday },
+    { key: 'saturday', label: 'Samstag', on: (s) => s.tvSaturday }
+  ];
+
   /** @type {HTMLButtonElement} */
   const toggleBtn = document.getElementById('toggleBtn');
   /** @type {HTMLDivElement} */
@@ -61,6 +83,10 @@
   const monthSum = document.getElementById('monthSum');
   /** @type {HTMLSpanElement} */
   const surchargeSum = document.getElementById('surchargeSum');
+  /** @type {HTMLDivElement} */
+  const surchargeSumRow = document.getElementById('surchargeSumRow');
+  /** @type {HTMLDivElement} */
+  const surchargeBreakdown = document.getElementById('surchargeBreakdown');
   /** @type {HTMLSpanElement} */
   const expectedSum = document.getElementById('expectedSum');
   /** @type {HTMLSpanElement} */
@@ -108,13 +134,24 @@
   let editingId = null;
 
   // Clock
+  let lastClockMinute = -1;
   setInterval(updateClock, 1000);
   updateClock();
 
   function updateClock() {
     const now = new Date();
     nowTime.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    nowDate.textContent = now.toLocaleDateString();
+    nowDate.textContent = now.toLocaleDateString('de-DE');
+    // Once per minute: refresh live running duration (skip first call, UI is rendered on init)
+    const minute = now.getMinutes();
+    if (minute !== lastClockMinute) {
+      const first = lastClockMinute === -1;
+      lastClockMinute = minute;
+      if (!first && getRunningEntry()) {
+        renderStatus();
+        renderToday();
+      }
+    }
   }
 
   // Install prompt handling
@@ -163,6 +200,27 @@
   const settingNightTo = document.getElementById('settingNightTo');
   /** @type {HTMLInputElement} */
   const settingSundayHoliday = document.getElementById('settingSundayHoliday');
+  /** @type {HTMLSelectElement} */
+  const settingSurchargeMode = document.getElementById('settingSurchargeMode');
+  const simpleSurchargeBox = document.getElementById('simpleSurchargeBox');
+  const tvoedSurchargeBox = document.getElementById('tvoedSurchargeBox');
+  const settingTvNightFrom = document.getElementById('settingTvNightFrom');
+  const settingTvNightTo = document.getElementById('settingTvNightTo');
+  const settingTvSunday = document.getElementById('settingTvSunday');
+  const settingTvHoliday = document.getElementById('settingTvHoliday');
+  const settingTvXmas = document.getElementById('settingTvXmas');
+  const settingTvXmasFrom = document.getElementById('settingTvXmasFrom');
+  const settingTvSaturday = document.getElementById('settingTvSaturday');
+  const settingTvSaturdayFrom = document.getElementById('settingTvSaturdayFrom');
+  const settingTvSaturdayTo = document.getElementById('settingTvSaturdayTo');
+  const settingTvXmasReduceTarget = document.getElementById('settingTvXmasReduceTarget');
+
+  function updateSurchargeModeVisibility() {
+    const tv = settingSurchargeMode.value === 'tvoed';
+    simpleSurchargeBox.hidden = tv;
+    tvoedSurchargeBox.hidden = !tv;
+  }
+  settingSurchargeMode.addEventListener('change', updateSurchargeModeVisibility);
   /** @type {HTMLInputElement} */
   const settingExcludeHolidaysFromExpected = document.getElementById('settingExcludeHolidaysFromExpected');
 
@@ -221,14 +279,7 @@
     // Add UTF-8 BOM for proper encoding
     const csvWithBom = '\uFEFF' + csv;
     const blob = new Blob([csvWithBom], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `arbeitszeiten_${year}-${String(month+1).padStart(2,'0')}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    URL.revokeObjectURL(url);
-    a.remove();
+    downloadBlob(blob, `arbeitszeiten_${year}-${String(month+1).padStart(2,'0')}.csv`);
   });
 
   importBtn.addEventListener('click', () => {
@@ -247,11 +298,7 @@
         return;
       }
       const replace = confirm('Bestehende Einträge ersetzen?\nOK = Ersetzen, Abbrechen = Anhängen');
-      if (replace) {
-        entries = imported;
-      } else {
-        entries = entries.concat(imported);
-      }
+      entries = replace ? dedupeEntries(imported) : mergeEntries(entries, imported);
       saveEntries(entries);
       refreshUI();
       announce('Import abgeschlossen');
@@ -266,14 +313,7 @@
       const payload = { version: 2, exportedAt: new Date().toISOString(), settings, entries };
       const json = JSON.stringify(payload, null, 2);
       const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `wlog-backup-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
-      document.body.appendChild(a);
-      a.click();
-      URL.revokeObjectURL(url);
-      a.remove();
+      downloadBlob(blob, `wlog-backup-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`);
     } catch (e) {
       console.error(e);
       announce('Backup fehlgeschlagen');
@@ -298,11 +338,7 @@
         return;
       }
       const replace = confirm('Bestehende Einträge ersetzen?\nOK = Ersetzen, Abbrechen = Anhängen');
-      if (replace) {
-        entries = imported;
-      } else {
-        entries = entries.concat(imported);
-      }
+      entries = replace ? dedupeEntries(imported) : mergeEntries(entries, imported);
       saveEntries(entries);
 
       if (normalized.settings) {
@@ -323,6 +359,7 @@
 
   deleteEntryBtn.addEventListener('click', () => {
     if (!editingId) return;
+    if (!confirm('Eintrag wirklich löschen?')) return;
     entries = entries.filter(e => e.id !== editingId);
     saveEntries(entries);
     closeEditor();
@@ -409,7 +446,8 @@
     if (running) {
       toggleBtn.textContent = 'Stop';
       const start = new Date(running.start);
-      statusRow.textContent = `Läuft seit ${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      const elapsed = fmtDuration(Math.max(0, Date.now() - start.getTime()));
+      statusRow.textContent = `Läuft seit ${fmtTime(start)} · ${elapsed} h`;
     } else {
       toggleBtn.textContent = 'Start';
       statusRow.textContent = '';
@@ -429,39 +467,12 @@
     todayList.innerHTML = '';
     let totalMs = 0;
     for (const e of todays) {
-      const li = document.createElement('li');
       const start = new Date(e.start);
       const end = e.end ? new Date(e.end) : null;
-      const durationMs = getEntryNetMs(e, settings, start, end);
+      // Running entries count up to now
+      const durationMs = getEntryNetMs(e, settings, start, end || new Date());
       totalMs += durationMs;
-
-      const title = document.createElement('div');
-      title.className = 'row-strong';
-      const type = e.type || 'work';
-      if (type === 'u') {
-        li.classList.add('daytype-u');
-        title.textContent = `U (Urlaub)`;
-      } else if (type === 'f') {
-        li.classList.add('daytype-f');
-        title.textContent = `F (Frei)`;
-      } else {
-        title.textContent = `${fmtTime(start)}${end ? ' – ' + fmtTime(end) : ' – …'}`;
-      }
-
-      const meta = document.createElement('div');
-      meta.className = 'row-meta';
-      const pauseInfo = (type === 'work' && end) ? formatPauseInfo(e, settings) : '';
-      meta.textContent = `${start.toLocaleDateString()} • ${fmtDuration(durationMs)}${pauseInfo}`;
-
-      const edit = document.createElement('button');
-      edit.className = 'btn';
-      edit.textContent = 'Bearbeiten';
-      edit.addEventListener('click', () => openEditor(e, false));
-
-      li.appendChild(title);
-      li.appendChild(meta);
-      li.appendChild(edit);
-      todayList.appendChild(li);
+      todayList.appendChild(renderEntryRow(e, start, end, durationMs, start.toLocaleDateString('de-DE')));
     }
     todaySum.textContent = fmtDuration(totalMs);
   }
@@ -478,63 +489,37 @@
     monthList.innerHTML = '';
     let totalMs = 0;
     let surchargeMs = 0;
+    const catTotals = emptySurchargeCats();
     const holidaySet = getHolidaySetSync(year, settings.stateCode);
 
     for (const e of monthEntries) {
-      const li = document.createElement('li');
       const startTime = new Date(e.start);
       const endTime = e.end ? new Date(e.end) : null;
       const durationMs = getEntryNetMs(e, settings, startTime, endTime);
       totalMs += durationMs;
 
-      // Calculate surcharge time
-      const surcharge = calculateSurcharge(startTime, endTime, settings);
-      surchargeMs += surcharge;
-      
-      
-      // Add surcharge class if applicable
-      if (surcharge > 0) {
-        li.classList.add('surcharge');
-      }
+      const sc = computeSurcharge(startTime, endTime, settings);
+      surchargeMs += sc.total;
+      if (sc.cats) for (const k in catTotals) catTotals[k] += sc.cats[k];
+
       const holidayKey = new Date(startTime.getFullYear(), startTime.getMonth(), startTime.getDate()).getTime();
       const isHoliday = holidaySet.has(holidayKey);
-      if (isHoliday) {
-        li.classList.add('holiday');
-      }
-
-      const title = document.createElement('div');
-      title.className = 'row-strong';
-      const type = e.type || 'work';
-      if (type === 'u') {
-        li.classList.add('daytype-u');
-        title.textContent = `U (Urlaub)`;
-      } else if (type === 'f') {
-        li.classList.add('daytype-f');
-        title.textContent = `F (Frei)`;
-      } else {
-        title.textContent = `${fmtTime(startTime)}${endTime ? ' – ' + fmtTime(endTime) : ' – …'}`;
-      }
-
-      const meta = document.createElement('div');
-      meta.className = 'row-meta';
       const dayName = startTime.toLocaleDateString('de-DE', { weekday: 'long' });
-      const holidayEmoji = isHoliday ? '🎉 ' : '';
-      const pauseInfo = (type === 'work' && endTime) ? formatPauseInfo(e, settings) : '';
-      meta.textContent = `${startTime.toLocaleDateString()} (${holidayEmoji}${dayName}) • ${fmtDuration(durationMs)}${pauseInfo}`;
+      const dateLabel = `${startTime.toLocaleDateString('de-DE')} (${isHoliday ? '🎉 ' : ''}${dayName})`;
 
-      const edit = document.createElement('button');
-      edit.className = 'btn';
-      edit.textContent = 'Bearbeiten';
-      edit.addEventListener('click', () => openEditor(e, false));
-
-      li.appendChild(title);
-      li.appendChild(meta);
-      li.appendChild(edit);
+      const li = renderEntryRow(e, startTime, endTime, durationMs, dateLabel);
+      if (sc.total > 0) li.classList.add('surcharge');
+      if (sc.cats) {
+        const parts = activeSurchargeCats(settings).filter(c => sc.cats[c.key] > 0).map(c => `${c.label} ${fmtDuration(sc.cats[c.key])}`);
+        if (parts.length) li.querySelector('.row-meta').textContent += ` • ${parts.join(', ')}`;
+      }
+      if (isHoliday) li.classList.add('holiday');
       monthList.appendChild(li);
     }
-    
+
     monthSum.textContent = fmtDuration(totalMs);
     surchargeSum.textContent = fmtDuration(surchargeMs);
+    renderSurchargeBreakdown(catTotals);
 
     // Expected working time: start with nationwide holidays for quick display
     const nationwideExpectedMs = calculateExpectedMonthMs(year, month, getGermanPublicHolidaySet(year), settings);
@@ -545,14 +530,71 @@
     }
 
     // Refine asynchronously using state-specific holidays
+    const requestedMonth = monthInput.value;
+    const hadStateHolidays = hasCachedStateHolidays(year, settings.stateCode);
     loadStateHolidaySet(year, settings.stateCode).then((stateHolidaySet) => {
       if (!stateHolidaySet) return;
+      if (monthInput.value !== requestedMonth) return; // month changed meanwhile
+      // First load of this year's state holidays: rows/surcharges used the nationwide fallback, render again
+      if (!hadStateHolidays) { renderMonth(); return; }
       const refinedExpected = calculateExpectedMonthMs(year, month, stateHolidaySet, settings);
       expectedSum.textContent = fmtDuration(refinedExpected);
       deltaSum.textContent = fmtSignedDuration(totalMs - refinedExpected);
     }).catch(() => {
       // ignore errors and keep nationwide result
     });
+  }
+
+  function renderSurchargeBreakdown(catTotals) {
+    surchargeBreakdown.innerHTML = '';
+    const tv = settings.surchargeEnabled && settings.surchargeMode === 'tvoed';
+    surchargeSumRow.hidden = tv || !settings.surchargeEnabled;
+    if (!tv) return;
+    const head = document.createElement('div');
+    head.className = 'sum-row';
+    head.textContent = 'Zuschläge (TVöD)';
+    surchargeBreakdown.appendChild(head);
+    for (const c of activeSurchargeCats(settings)) {
+      const row = document.createElement('div');
+      row.className = 'sum-row sub';
+      const label = document.createElement('span');
+      label.textContent = c.label;
+      const val = document.createElement('strong');
+      val.textContent = fmtDuration(catTotals[c.key]);
+      row.append(label, val);
+      surchargeBreakdown.appendChild(row);
+    }
+  }
+
+  /** Build one list row (shared by "Heute" and "Monatsansicht") */
+  function renderEntryRow(e, start, end, durationMs, dateLabel) {
+    const li = document.createElement('li');
+    const type = e.type || 'work';
+
+    const title = document.createElement('div');
+    title.className = 'row-strong';
+    if (type === 'u') {
+      li.classList.add('daytype-u');
+      title.textContent = 'U (Urlaub)';
+    } else if (type === 'f') {
+      li.classList.add('daytype-f');
+      title.textContent = 'F (Frei)';
+    } else {
+      title.textContent = `${fmtTime(start)}${end ? ' – ' + fmtTime(end) : ' – …'}`;
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'row-meta';
+    const pauseInfo = (type === 'work' && end) ? formatPauseInfo(e, settings) : '';
+    meta.textContent = `${dateLabel} • ${fmtDuration(durationMs)}${pauseInfo}`;
+
+    const edit = document.createElement('button');
+    edit.className = 'btn';
+    edit.textContent = 'Bearbeiten';
+    edit.addEventListener('click', () => openEditor(e, false));
+
+    li.append(title, meta, edit);
+    return li;
   }
 
   function calculateExpectedMonthMs(year, month, holidaySetOptional, settingsObj) {
@@ -571,6 +613,7 @@
     for (let d = new Date(start); d < capEnd; d.setDate(d.getDate() + 1)) {
       const weekday = d.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
       if (weekday >= 1 && weekday <= 5) {
+        if (isTvXmasTargetFree(d, settingsObj)) continue;
         if (settingsObj && settingsObj.excludePublicHolidaysFromExpected) {
           const key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
           if (!holidays.has(key)) expectedDays += 1;
@@ -589,14 +632,14 @@
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (parsed && Array.isArray(parsed.dates)) {
+        if (parsed && Array.isArray(parsed.dates) && parsed.dates.length) {
           return datesArrayToSet(parsed.dates);
         }
       }
     } catch {}
 
     try {
-      const url = `https://get.api-feiertage.de?states=${encodeURIComponent(state)}`;
+      const url = `https://get.api-feiertage.de?states=${encodeURIComponent(state)}&years=${year}`;
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -609,6 +652,7 @@
           if (y === year) dates.push(f.date);
         }
       }
+      if (!dates.length) return null;
       try { localStorage.setItem(cacheKey, JSON.stringify({ dates })); } catch {}
       return datesArrayToSet(dates);
     } catch {
@@ -628,6 +672,15 @@
     return set;
   }
 
+  function hasCachedStateHolidays(year, state) {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(`${HOLIDAY_CACHE_PREFIX}${state}.${year}`) || 'null');
+      return !!(parsed && Array.isArray(parsed.dates) && parsed.dates.length);
+    } catch {
+      return false;
+    }
+  }
+
   // Get holiday Set synchronously: prefer cached API data for state; fallback to nationwide calculation
   function getHolidaySetSync(year, state) {
     const cacheKey = `${HOLIDAY_CACHE_PREFIX}${state}.${year}`;
@@ -635,7 +688,7 @@
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (parsed && Array.isArray(parsed.dates)) {
+        if (parsed && Array.isArray(parsed.dates) && parsed.dates.length) {
           return datesArrayToSet(parsed.dates);
         }
       }
@@ -701,6 +754,96 @@
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
     return `${sign}${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}`;
+  }
+
+  // --- TVöD surcharges (§ 8 Abs. 1 TVöD) ---
+
+
+  function activeSurchargeCats(s) {
+    return SURCHARGE_CATS.filter(c => c.on(s));
+  }
+
+  function emptySurchargeCats() {
+    return { night: 0, holiday: 0, xmas: 0, sunday: 0, saturday: 0 };
+  }
+
+  function isXmasOrNye(d) {
+    return d.getMonth() === 11 && (d.getDate() === 24 || d.getDate() === 31);
+  }
+
+  function isTvXmasTargetFree(d, s) {
+    return !!(s && s.surchargeMode === 'tvoed' && s.tvXmasReduceTarget && isXmasOrNye(d));
+  }
+
+  function timeToMin(hhmm) {
+    const t = parseTimeHHMM(hhmm || '');
+    return t ? t.h * 60 + t.min : 0;
+  }
+
+  // Is minute-of-day m inside [from, to)? Handles windows across midnight.
+  function inWindow(m, from, to) {
+    if (from === to) return false;
+    return from < to ? (m >= from && m < to) : (m >= from || m < to);
+  }
+
+  /** Returns { total, cats } — cats is null in simple mode */
+  function computeSurcharge(startTime, endTime, s) {
+    if (!s || !s.surchargeEnabled) return { total: 0, cats: null };
+    if (s.surchargeMode !== 'tvoed') return { total: calculateSurcharge(startTime, endTime, s), cats: null };
+    const cats = calculateSurchargeTvoed(startTime, endTime, s);
+    const total = Object.values(cats).reduce((a, b) => a + b, 0);
+    return { total, cats };
+  }
+
+  function calculateSurchargeTvoed(startTime, endTime, s) {
+    const res = emptySurchargeCats();
+    if (!endTime || endTime <= startTime) return res;
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const nightFrom = timeToMin(s.tvNightFrom), nightTo = timeToMin(s.tvNightTo);
+    const xmasFrom = timeToMin(s.tvXmasFrom);
+    const satFrom = timeToMin(s.tvSaturdayFrom), satTo = timeToMin(s.tvSaturdayTo);
+    const holidaySets = new Map();
+    const holidaysFor = (y) => {
+      if (!holidaySets.has(y)) holidaySets.set(y, getHolidaySetSync(y, s.stateCode));
+      return holidaySets.get(y);
+    };
+
+    const day = new Date(start);
+    day.setHours(0, 0, 0, 0);
+    while (day < end) {
+      const nextDay = new Date(day);
+      nextDay.setDate(day.getDate() + 1);
+      const from = Math.max(day.getTime(), start.getTime());
+      const to = Math.min(nextDay.getTime(), end.getTime());
+      if (to > from) {
+        const isHoliday = holidaysFor(day.getFullYear()).has(day.getTime());
+        const isXmas = isXmasOrNye(day);
+        const weekday = day.getDay();
+
+        // Split the day at every configured boundary, then classify each piece
+        const cuts = [from, to];
+        for (const m of [nightFrom, nightTo, xmasFrom, satFrom, satTo]) {
+          const t = new Date(day);
+          t.setHours(0, m, 0, 0);
+          if (t.getTime() > from && t.getTime() < to) cuts.push(t.getTime());
+        }
+        cuts.sort((a, b) => a - b);
+        for (let i = 0; i < cuts.length - 1; i++) {
+          const len = cuts[i + 1] - cuts[i];
+          if (len <= 0) continue;
+          const mid = new Date(cuts[i] + len / 2);
+          const m = mid.getHours() * 60 + mid.getMinutes();
+          if (inWindow(m, nightFrom, nightTo)) res.night += len;
+          if (s.tvHoliday && isHoliday) res.holiday += len;
+          else if (s.tvXmas && isXmas && m >= xmasFrom) res.xmas += len;
+          else if (s.tvSunday && weekday === 0) res.sunday += len;
+          else if (s.tvSaturday && weekday === 6 && inWindow(m, satFrom, satTo)) res.saturday += len;
+        }
+      }
+      day.setTime(nextDay.getTime());
+    }
+    return res;
   }
 
   function calculateSurcharge(startTime, endTime, settingsObj) {
@@ -810,9 +953,13 @@
   function buildMonthlyCsv(allEntries, year, month) {
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
-    const rows = [['Datum','Start','Ende','Dauer (hh:mm)','Zuschläge (hh:mm)','Wochentag','Typ','Pause (Min)','Exakte Startzeit','Ort','Soll (Std/Tag)']];
+    const tvCats = (settings.surchargeEnabled && settings.surchargeMode === 'tvoed') ? activeSurchargeCats(settings) : null;
+    const surchargeHeaders = tvCats ? tvCats.map(c => `Zuschlag ${c.label} (hh:mm)`) : ['Zuschläge (hh:mm)'];
+    const rows = [['Datum','Start','Ende','Dauer (hh:mm)',...surchargeHeaders,'Wochentag','Typ','Pause (Min)','Exakte Startzeit','Ort','Soll (Std/Tag)']];
     let totalMs = 0;
     let totalSurchargeMs = 0;
+    const catTotals = emptySurchargeCats();
+    const surchargeCols = (sc) => tvCats ? tvCats.map(c => fmtDuration(sc.cats[c.key])) : [fmtDuration(sc.total)];
     const monthEntries = allEntries
       .filter(e => new Date(e.start) >= start && new Date(e.start) < end)
       .sort((a,b) => new Date(a.start) - new Date(b.start));
@@ -820,17 +967,18 @@
       const s = new Date(e.start);
       const t = e.end ? new Date(e.end) : null;
       const durMs = getEntryNetMs(e, settings, s, t);
-      const surchargeMs = calculateSurcharge(s, t, settings);
+      const sc = computeSurcharge(s, t, settings);
+      if (sc.cats) for (const k in catTotals) catTotals[k] += sc.cats[k];
       const dayName = s.toLocaleDateString('de-DE', { weekday: 'long' });
       const type = e.type || 'work';
       totalMs += durMs;
-      totalSurchargeMs += surchargeMs;
+      totalSurchargeMs += sc.total;
       rows.push([
-        s.toLocaleDateString(),
+        s.toLocaleDateString('de-DE'),
         (type === 'work') ? fmtTime(s) : '',
         (type === 'work' && t) ? fmtTime(t) : '',
         fmtDuration(durMs),
-        fmtDuration(surchargeMs),
+        ...surchargeCols(sc),
         dayName,
         type,
         (typeof e.pauseMin === 'number') ? String(e.pauseMin) : '',
@@ -840,7 +988,7 @@
       ]);
     }
     rows.push([]);
-    rows.push(['Summe','','',fmtDuration(totalMs),fmtDuration(totalSurchargeMs),'']);
+    rows.push(['Summe','','',fmtDuration(totalMs),...surchargeCols({ total: totalSurchargeMs, cats: catTotals })]);
     return rows.map(r => r.map(escapeCsv).join(';')).join('\n');
   }
 
@@ -861,7 +1009,7 @@
     const idxDate = header.findIndex(h => /datum/i.test(h));
     const idxStart = header.findIndex(h => /^start$/i.test(h));
     const idxEnd = header.findIndex(h => /^ende$/i.test(h));
-    const idxType = header.findIndex(h => /(typ|art)/i.test(h));
+    const idxType = header.findIndex(h => /^(typ|art)$/i.test(h.trim()));
     const idxPause = header.findIndex(h => /pause/i.test(h));
     const idxExactStart = header.findIndex(h => /(exakt|override|overdrive)/i.test(h));
     if (idxDate < 0 || idxStart < 0) return [];
@@ -884,6 +1032,8 @@
         start = parseLocalDateTime(dateStr, startStr);
         end = endStr ? parseLocalDateTime(dateStr, endStr) : null;
         if (!start) continue;
+        // Night shift: end time before start time means the shift ended the next day
+        if (end && end <= start) end.setDate(end.getDate() + 1);
       } else {
         start = parseLocalDate(dateStr);
         end = null;
@@ -990,6 +1140,29 @@
     }
   }
 
+  // Key for detecting duplicate entries independent of their id
+  function entryKey(e) {
+    return `${e.type || 'work'}|${e.start}`;
+  }
+
+  // Append imported entries, skipping those whose id or start/type already exists
+  function mergeEntries(existing, imported) {
+    const ids = new Set(existing.map(e => e.id));
+    const keys = new Set(existing.map(entryKey));
+    const out = existing.slice();
+    for (const e of imported) {
+      if (ids.has(e.id) || keys.has(entryKey(e))) continue;
+      ids.add(e.id);
+      keys.add(entryKey(e));
+      out.push(e);
+    }
+    return out;
+  }
+
+  function dedupeEntries(list) {
+    return mergeEntries([], list);
+  }
+
   function safeDate(value) {
     try {
       const d = new Date(value);
@@ -1075,6 +1248,12 @@
     if (typeof obj.surchargeNightTo === 'string' && parseTimeHHMM(obj.surchargeNightTo)) out.surchargeNightTo = obj.surchargeNightTo;
     out.surchargeSundayHoliday = (obj.surchargeSundayHoliday !== undefined) ? !!obj.surchargeSundayHoliday : DEFAULT_SETTINGS.surchargeSundayHoliday;
 
+    const bool = (k) => { out[k] = (obj[k] !== undefined) ? !!obj[k] : DEFAULT_SETTINGS[k]; };
+    const time = (k) => { if (typeof obj[k] === 'string' && parseTimeHHMM(obj[k])) out[k] = obj[k]; };
+    out.surchargeMode = (obj.surchargeMode === 'tvoed') ? 'tvoed' : 'simple';
+    ['tvNightFrom', 'tvNightTo', 'tvXmasFrom', 'tvSaturdayFrom', 'tvSaturdayTo'].forEach(time);
+    ['tvSunday', 'tvHoliday', 'tvXmas', 'tvSaturday', 'tvXmasReduceTarget'].forEach(bool);
+
     out.excludePublicHolidaysFromExpected = (obj.excludePublicHolidaysFromExpected !== undefined) ? !!obj.excludePublicHolidaysFromExpected : DEFAULT_SETTINGS.excludePublicHolidaysFromExpected;
     return out;
   }
@@ -1093,6 +1272,18 @@
     settingNightFrom.value = settings.surchargeNightFrom || DEFAULT_SETTINGS.surchargeNightFrom;
     settingNightTo.value = settings.surchargeNightTo || DEFAULT_SETTINGS.surchargeNightTo;
     settingSundayHoliday.checked = !!settings.surchargeSundayHoliday;
+    settingSurchargeMode.value = settings.surchargeMode;
+    settingTvNightFrom.value = settings.tvNightFrom;
+    settingTvNightTo.value = settings.tvNightTo;
+    settingTvSunday.checked = settings.tvSunday;
+    settingTvHoliday.checked = settings.tvHoliday;
+    settingTvXmas.checked = settings.tvXmas;
+    settingTvXmasFrom.value = settings.tvXmasFrom;
+    settingTvSaturday.checked = settings.tvSaturday;
+    settingTvSaturdayFrom.value = settings.tvSaturdayFrom;
+    settingTvSaturdayTo.value = settings.tvSaturdayTo;
+    settingTvXmasReduceTarget.checked = settings.tvXmasReduceTarget;
+    updateSurchargeModeVisibility();
     settingExcludeHolidaysFromExpected.checked = !!settings.excludePublicHolidaysFromExpected;
     settingsDialog.showModal();
   }
@@ -1117,6 +1308,17 @@
     out.surchargeNightFrom = settingNightFrom.value || DEFAULT_SETTINGS.surchargeNightFrom;
     out.surchargeNightTo = settingNightTo.value || DEFAULT_SETTINGS.surchargeNightTo;
     out.surchargeSundayHoliday = !!settingSundayHoliday.checked;
+    out.surchargeMode = settingSurchargeMode.value;
+    out.tvNightFrom = settingTvNightFrom.value || DEFAULT_SETTINGS.tvNightFrom;
+    out.tvNightTo = settingTvNightTo.value || DEFAULT_SETTINGS.tvNightTo;
+    out.tvSunday = settingTvSunday.checked;
+    out.tvHoliday = settingTvHoliday.checked;
+    out.tvXmas = settingTvXmas.checked;
+    out.tvXmasFrom = settingTvXmasFrom.value || DEFAULT_SETTINGS.tvXmasFrom;
+    out.tvSaturday = settingTvSaturday.checked;
+    out.tvSaturdayFrom = settingTvSaturdayFrom.value || DEFAULT_SETTINGS.tvSaturdayFrom;
+    out.tvSaturdayTo = settingTvSaturdayTo.value || DEFAULT_SETTINGS.tvSaturdayTo;
+    out.tvXmasReduceTarget = settingTvXmasReduceTarget.checked;
 
     out.excludePublicHolidaysFromExpected = !!settingExcludeHolidaysFromExpected.checked;
     return normalizeSettings(out) || { ...DEFAULT_SETTINGS };
@@ -1203,6 +1405,18 @@
       dateInput.value = toLocalDateInputValue(d);
     } catch {}
   });
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke later: iOS Safari aborts the download if the URL is revoked immediately
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
 
   function announce(text) {
     statusRow.textContent = text;
